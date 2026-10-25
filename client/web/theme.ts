@@ -136,9 +136,9 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
         },
         // Tooltips sit over the code: a raised surface, a firm border, and a shadow set them apart.
         ".cm-tooltip": {
-          backgroundColor: colors.surface1,
+          backgroundColor: colors.surface2,
           color: colors.foreground,
-          border: `1px solid color-mix(in srgb, ${colors.foreground} 22%, ${colors.surface1})`,
+          border: `1px solid color-mix(in srgb, ${colors.foreground} 22%, ${colors.surface2})`,
           borderRadius: "6px",
           boxShadow: isDark(theme)
             ? "0 8px 24px rgba(0, 0, 0, 0.55)"
@@ -153,18 +153,18 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           overscrollBehavior: "contain",
         },
         ".cm-tooltip-hover .cm-tooltip-section:not(:first-child)": {
-          borderTop: `1px solid color-mix(in srgb, ${colors.foreground} 18%, ${colors.surface1})`,
+          borderTop: `1px solid color-mix(in srgb, ${colors.foreground} 18%, ${colors.surface2})`,
         },
         ".cm-lsp-hover-tooltip.cm-lsp-documentation": { padding: "4px 10px" },
         ".cm-lsp-documentation pre": {
           overflowX: "auto",
           padding: "4px 6px",
           borderRadius: "4px",
-          backgroundColor: colors.surface0,
+          backgroundColor: colors.surface1,
         },
         ".cm-lsp-documentation hr": {
           border: "none",
-          borderTop: `1px solid color-mix(in srgb, ${colors.foreground} 18%, ${colors.surface1})`,
+          borderTop: `1px solid color-mix(in srgb, ${colors.foreground} 18%, ${colors.surface2})`,
         },
         ".cm-tooltip-autocomplete ul li[aria-selected]": {
           backgroundColor: colors.accent,
