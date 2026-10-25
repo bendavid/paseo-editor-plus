@@ -109,18 +109,27 @@ export interface LanguageTags {
   tags: readonly { tag: Tag | Tag[]; color: keyof Palette }[];
 }
 
-/** Everything colour: the editor chrome, the grammar's highlighting, and semantic tokens. */
+/** The editor's text size; tooltips and menus use it too. */
+export const EDITOR_FONT_SIZE_PX = 13;
+
+/** The editor's look: its chrome, text size, the grammar's highlighting, and semantic tokens. */
 export function editorTheme(theme: PluginTheme, language: LanguageTags): Extension {
   const { colors } = theme;
   const c = palette(theme);
   return [
     EditorView.theme(
       {
-        "&": { height: "100%", color: colors.foreground, backgroundColor: colors.surface0 },
+        // One text size for the editor; tooltips and menus follow it.
+        "&": {
+          height: "100%",
+          color: colors.foreground,
+          backgroundColor: colors.surface0,
+          "--editor-plus-font-size": `${EDITOR_FONT_SIZE_PX}px`,
+        },
         ".cm-scroller": {
           overflow: "auto",
           fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
-          fontSize: "13px",
+          fontSize: "var(--editor-plus-font-size)",
           lineHeight: "1.55",
         },
         ".cm-content": { padding: "8px 0", caretColor: colors.foreground },
@@ -136,6 +145,8 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
         },
         // Tooltips sit over the code: a raised surface, a firm border, and a shadow set them apart.
         ".cm-tooltip": {
+          fontSize: "var(--editor-plus-font-size)",
+          lineHeight: "1.45",
           backgroundColor: colors.surface2,
           color: colors.foreground,
           border: `1px solid color-mix(in srgb, ${colors.foreground} 22%, ${colors.surface2})`,
@@ -176,7 +187,8 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           border: "none",
           color: colors.foregroundMuted,
         },
-        ".cm-lsp-documentation code, .cm-lsp-documentation pre": { fontSize: "12px" },
+        // Code in documentation a touch smaller than its prose, as in the editor's own font.
+        ".cm-lsp-documentation code, .cm-lsp-documentation pre": { fontSize: "0.92em" },
       },
       { dark: isDark(theme) },
     ),

@@ -59,7 +59,7 @@ const theme = EditorView.baseTheme({
   ".cm-tooltip.cm-spelling-menu": {
     padding: "4px 0",
     minWidth: "160px",
-    font: "13px/1.4 system-ui, sans-serif",
+    font: "var(--editor-plus-font-size, 13px)/1.4 system-ui, sans-serif",
   },
   ".cm-spelling-menu button": {
     display: "block",
