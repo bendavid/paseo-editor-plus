@@ -139,9 +139,18 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           color: colors.foregroundMuted,
           border: "none",
         },
-        ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: colors.surface1 },
-        "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-          backgroundColor: `${colors.accent}40`,
+        // The selection is drawn behind the text, so the current line's background must let it
+        // show through.
+        ".cm-activeLine": {
+          backgroundColor: `color-mix(in srgb, ${colors.foreground} 5%, transparent)`,
+        },
+        ".cm-activeLineGutter": { backgroundColor: colors.surface1 },
+        // As specific as CodeMirror's own rules, which otherwise win with a near-invisible grey.
+        "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection": {
+          backgroundColor: `color-mix(in srgb, ${colors.accent} 35%, transparent)`,
+        },
+        "& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+          backgroundColor: `color-mix(in srgb, ${colors.accent} 22%, transparent)`,
         },
         // Tooltips sit over the code: a raised surface, a firm border, and a shadow set them apart.
         ".cm-tooltip": {
