@@ -220,7 +220,10 @@ export function EditorPanel(props: EditorPanelProps) {
     if (draftTimer.current !== undefined) clearTimeout(draftTimer.current);
     draftTimer.current = undefined;
     if ((savedRef.current.draft ?? null) === draft) return;
-    setSavedRef.current({ ...savedRef.current, draft });
+    const next = { ...savedRef.current, draft };
+    // Read back before the tab state re-renders: a load right after must see it.
+    savedRef.current = next;
+    setSavedRef.current(next);
   }, []);
 
   const scheduleSave = useCallback(() => {
@@ -296,11 +299,18 @@ export function EditorPanel(props: EditorPanelProps) {
   const saveRef = useRef(save);
   saveRef.current = save;
 
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  const storeDraftRef = useRef(storeDraft);
+  storeDraftRef.current = storeDraft;
+
+  // Once per file: the host re-creates `tab` (and so `load`) as it re-renders, and running this
+  // again would reload the file over unsaved edits.
   useEffect(() => {
-    void load(true);
+    void loadRef.current(true);
     const unwatch = file.watch((event) => {
       if (event.type === "deleted") setFileState("deleted");
-      else if (unsaved.current === null) void load();
+      else if (unsaved.current === null) void loadRef.current();
       else setFileState("conflict");
     });
     return () => {
@@ -314,10 +324,10 @@ export function EditorPanel(props: EditorPanelProps) {
       } else {
         // Paseo asks before closing a modified tab, and the panel cannot tell a close from other
         // unmounts: keep the edits with the tab, which a close without saving discards.
-        storeDraft(unsaved.current);
+        storeDraftRef.current(unsaved.current);
       }
     };
-  }, [file, load, storeDraft]);
+  }, [file]);
 
   // Turning auto-save on, or learning that it is, saves what is pending.
   useEffect(() => {
