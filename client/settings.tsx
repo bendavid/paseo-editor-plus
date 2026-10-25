@@ -28,7 +28,7 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
   const settings = useSettings(serverSettings);
   if (settings.status !== "ready") {
     return (
-      <SettingsSection title="Language servers">
+      <SettingsSection title="Settings">
         <SettingsCard>
           <SettingsRow
             label="Settings"

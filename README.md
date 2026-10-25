@@ -60,7 +60,7 @@ and Paseo opens files reached from an agent's link or a search result in its own
 ## Language servers
 
 The plugin looks for each server in this order: the path set in **Settings › Plugins ›
-editor-plus › Language servers**, a copy the plugin installed, the daemon's `PATH`, your login
+editor-plus › Settings**, a copy the plugin installed, the daemon's `PATH`, your login
 shell's `PATH`, and common install directories.
 
 When none is found, the editor offers **Install…**. A confirmation shows the version, where it is

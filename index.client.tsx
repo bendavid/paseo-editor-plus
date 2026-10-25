@@ -10,8 +10,8 @@ export default function contribute(client: PluginClientContext) {
   const cleanups = [
     client.addSettingsScreen({
       id: SETTINGS_ID,
-      title: "Language servers",
-      icon: "Server",
+      title: "Settings",
+      icon: "Settings",
       Component: EditorPlusSettings,
     }),
     // One file panel per language, so Paseo's "Open with" names the language.
