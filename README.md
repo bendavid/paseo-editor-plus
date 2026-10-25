@@ -149,8 +149,14 @@ file, so a project's word list applies as it does in VS Code.
   file's language and splits compounds such as `usageSumary`. Alt+Enter because Paseo takes
   Ctrl+. for the sidebar.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
-  recompiles from them. The file is saved 500 ms after the last edit, and a change on disk while
-  edits are unsaved offers Reload or Overwrite.
+  recompiles from them. A change on disk while edits are unsaved offers Reload or Overwrite.
+- **Saving.** By default a file is saved 800 ms after the last edit, as Paseo's own editor does;
+  **Settings › Editor** turns that off or sets the delay. Ctrl/Cmd+S saves at any time. With
+  auto-save off, unsaved edits are kept in the tab's state (`draft`): Paseo asks before closing a
+  modified tab but the panel cannot tell that close from other unmounts, so writing on unmount
+  would save edits you chose to discard. The draft survives unmounting and app reloads and goes
+  with the tab. The panel loads its file once per mount; the host re-creates `tab` as it
+  re-renders, and loading again would replace unsaved edits.
 
 ## Adding a language
 
