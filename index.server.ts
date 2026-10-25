@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { findServer, ServerNotFoundError } from "./server/discovery";
+import { Installer, planInstall } from "./server/installer";
 import { EditorSession } from "./server/session";
 import { type LanguageProfile, languageById } from "./shared/languages";
 import {
@@ -13,6 +14,8 @@ import {
   pollSession,
   sendLsp,
   sendPreview,
+  installServer,
+  removeServer,
   serverSettings,
   serverStatus,
 } from "./shared/rpc";
@@ -40,13 +43,28 @@ async function projectRoot(file: string, root: string): Promise<string> {
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(serverSettings);
   const sessions = new Map<string, EditorSession>();
+  const installer = new Installer();
 
   async function locate(language: LanguageProfile) {
     const state = await settings.read();
     const configured =
       state.status === "ready" ? (state.values.servers[language.id]?.path ?? "") : "";
-    const { binary, homepage } = language.server;
-    return findServer({ binary, configured, homepage });
+    const { binary, homepage, package: packageId } = language.server;
+    return findServer({
+      binary,
+      configured,
+      homepage,
+      installed: () => installer.launch(packageId, binary),
+    });
+  }
+
+  /** A tool an install needs (npm, go), found the way servers are. */
+  async function tool(name: string): Promise<string | null> {
+    try {
+      return (await findServer({ binary: name, configured: "", homepage: "" })).path;
+    } catch {
+      return null;
+    }
   }
 
   function session(id: string): EditorSession | null {
@@ -91,8 +109,9 @@ export default function contribute(server: PluginServerContext) {
       id,
       new EditorSession({
         id,
-        binary: binary.path,
-        args: language.server.args,
+        command: binary.launch.command,
+        args: [...binary.launch.args, ...language.server.args],
+        env: binary.launch.env,
         name: language.server.name,
         root: rootPath,
         preview: language.preview,
@@ -137,16 +156,65 @@ export default function contribute(server: PluginServerContext) {
 
   server.handle(serverStatus, async ({ language: languageId }) => {
     const language = languageById(languageId);
-    if (!language) {
-      return { path: null, version: null, source: null, error: `Unknown language ${languageId}.` };
-    }
+    const none = {
+      path: null,
+      version: null,
+      source: null,
+      install: null,
+      installUnavailable: null,
+      installed: null,
+      job: null,
+    };
+    if (!language) return { ...none, error: `Unknown language ${languageId}.` };
+    const packageId = language.server.package;
+    const planned = planInstall(packageId);
+    const installed = await installer.installed(packageId);
+    const job = installer.job(packageId);
+    const extras = {
+      install: planned.ok ? planned.plan : null,
+      installUnavailable: planned.ok ? null : planned.reason,
+      installed,
+      job: job && { phase: job.phase, received: job.received, total: job.total, error: job.error },
+    };
     try {
       const binary = await locate(language);
-      return { path: binary.path, version: binary.version, source: binary.source, error: null };
+      return {
+        ...extras,
+        path: binary.path,
+        version: binary.version,
+        source: binary.source,
+        error: null,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { path: null, version: null, source: null, error: message };
+      return { ...extras, path: null, version: null, source: null, error: message };
     }
+  });
+
+  server.handle(installServer, async ({ language: languageId }) => {
+    const language = languageById(languageId);
+    if (!language) return { started: false, error: `Unknown language ${languageId}.` };
+    const planned = planInstall(language.server.package);
+    if (!planned.ok) return { started: false, error: planned.reason };
+    const needs = planned.plan.needs;
+    const tools = {
+      npm: needs === "npm" ? await tool("npm") : null,
+      go: needs === "go" ? await tool("go") : null,
+    };
+    if (needs && !tools[needs]) {
+      return {
+        started: false,
+        error: `Installing ${planned.plan.name} needs ${needs === "go" ? "Go" : "npm"} on the daemon host.`,
+      };
+    }
+    installer.start(language.server.package, tools);
+    return { started: true, error: null };
+  });
+
+  server.handle(removeServer, async ({ language: languageId }) => {
+    const language = languageById(languageId);
+    if (language) await installer.remove(language.server.package);
+    return {};
   });
 
   const reaper = setInterval(() => {

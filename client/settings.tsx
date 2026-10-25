@@ -1,10 +1,4 @@
-import type { RpcOutput } from "@getpaseo/plugin";
-import {
-  type PluginSurfaceProps,
-  type SettingsState,
-  useRpc,
-  useSettings,
-} from "@getpaseo/plugin/client";
+import { type PluginSurfaceProps, type SettingsState, useSettings } from "@getpaseo/plugin/client";
 import {
   SettingsAction,
   SettingsCard,
@@ -12,16 +6,17 @@ import {
   SettingsRow,
   SettingsSection,
 } from "@getpaseo/plugin/client/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Text } from "react-native";
 import { LANGUAGES, type LanguageProfile } from "../shared/languages";
-import { serverSettings, serverStatus } from "../shared/rpc";
+import { serverSettings } from "../shared/rpc";
+import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 
-type Status = RpcOutput<typeof serverStatus>;
 type ReadySettings = Extract<SettingsState<typeof serverSettings.schema>, { status: "ready" }>;
 
 const SOURCES: Record<string, string> = {
   setting: "the path set here",
+  installed: "the copy Editor Plus installed",
   path: "the daemon's PATH",
   shell: "your login shell's PATH",
   common: "a common install directory",
@@ -46,7 +41,7 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
   return (
     <>
       {LANGUAGES.map((language) => (
-        <ServerSection key={language.id} language={language} settings={settings} />
+        <ServerSection key={language.id} language={language} settings={settings} theme={theme} />
       ))}
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: 8 }}>
         Each open editor tab runs its own language server on the daemon host while it is open.
@@ -58,29 +53,23 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
 function ServerSection({
   language,
   settings,
+  theme,
 }: {
   language: LanguageProfile;
   settings: ReadySettings;
+  theme: PluginSurfaceProps["theme"];
 }) {
-  const fetchStatus = useRpc(serverStatus);
-  const [status, setStatus] = useState<Status | null>(null);
+  const { status, error, refresh, install, uninstall } = useServerStatus(language.id);
   const [draft, setDraft] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const { name, binary } = language.server;
-
-  const check = useCallback(() => {
-    setStatus(null);
-    void fetchStatus({ language: language.id }).then(setStatus, (error: unknown) =>
-      setStatus({ path: null, version: null, source: null, error: String(error) }),
-    );
-  }, [fetchStatus, language.id]);
-  useEffect(check, [check]);
 
   const save = async () => {
     if (draft === null) return;
     const servers = { ...settings.values.servers, [language.id]: { path: draft.trim() } };
     if (await settings.save({ servers }, settings.revision)) {
       setDraft(null);
-      check();
+      void refresh();
     }
   };
   let found = "Checking…";
@@ -88,6 +77,15 @@ function ServerSection({
     const version = status.version ? ` (${status.version})` : "";
     found = `${status.path}${version}, from ${SOURCES[status.source ?? ""] ?? "unknown"}`;
   }
+  const busy = installing(status);
+  const offer = status?.install ?? null;
+  const own = status?.installed ?? null;
+  let installLabel: string | null = null;
+  // Offer a copy only when none is found, or an update to the plugin's own copy: a server already
+  // on this host is the user's choice.
+  if (offer && !own && !status?.path) installLabel = `Install ${offer.version}`;
+  else if (offer && own && own.version !== offer.version)
+    installLabel = `Update to ${offer.version}`;
   return (
     <SettingsSection title={`${language.title} · ${name}`}>
       <SettingsCard>
@@ -96,9 +94,38 @@ function ServerSection({
           hint={status?.error ? undefined : found}
           error={status?.error ?? null}
         />
+        {own ? (
+          <SettingsAction
+            label={`Installed by Editor Plus: ${own.version}`}
+            hint={own.folder}
+            actionLabel="Remove"
+            disabled={busy}
+            onPress={() => void uninstall()}
+          />
+        ) : null}
+        {installLabel && offer ? (
+          <SettingsAction
+            label={`Install ${offer.name} here`}
+            hint={`${offer.license}. Asks before downloading.`}
+            actionLabel={busy ? "Installing…" : installLabel}
+            disabled={busy}
+            onPress={() => setConfirming(true)}
+          />
+        ) : null}
+        {!offer && status?.installUnavailable && !status.path ? (
+          <SettingsRow label="Install" hint={status.installUnavailable} />
+        ) : null}
+        {status?.job && status.job.phase !== "done" ? (
+          <SettingsRow
+            label="Progress"
+            hint={status.job.phase === "failed" ? undefined : progressText(status)}
+            error={status.job.phase === "failed" ? progressText(status) : null}
+          />
+        ) : null}
+        {error ? <SettingsRow label="Install" error={error} /> : null}
         <SettingsInput
           label={`${name} path`}
-          hint="Absolute path on the daemon host. Leave empty to search PATH, your login shell, and common install directories."
+          hint="Absolute path on the daemon host. Leave empty to use the installed copy or search PATH, your login shell, and common install directories."
           placeholder={`/usr/local/bin/${binary}`}
           initialValue={settings.values.servers[language.id]?.path ?? ""}
           onChangeText={setDraft}
@@ -111,6 +138,16 @@ function ServerSection({
           onPress={() => void save()}
         />
       </SettingsCard>
+      <InstallConfirm
+        details={offer}
+        open={confirming}
+        theme={theme}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void install();
+        }}
+      />
     </SettingsSection>
   );
 }

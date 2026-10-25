@@ -37,6 +37,8 @@ export interface CodeEditorOptions {
   parent: unknown;
   /** A language id from shared/languages.ts, for the editor's own parser and highlighting. */
   language: string;
+  /** The file's extension, lowercase without the dot; some languages parse by it (TSX, SCSS). */
+  extension: string;
   text: string;
   theme: PluginTheme;
   onChange(text: string): void;

@@ -28,10 +28,11 @@ import {
   sendLsp,
   sendPreview,
 } from "../shared/rpc";
-import type { LanguageProfile } from "../shared/languages";
+import { type LanguageProfile, languageIdFor } from "../shared/languages";
 import { messageOf, SessionConnection } from "./connection";
 import { LspTransport } from "./lsp-transport";
 import { previewProvider } from "./previews";
+import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 import type { SourceLocation } from "./previews/types";
 import { TooltipProvider, useTooltip } from "./tooltip";
 import type {
@@ -284,6 +285,7 @@ export function EditorPanel(props: EditorPanelProps) {
     editor.current = web.createEditor({
       parent: editorHost.current,
       language: language.id,
+      extension: file.extension,
       text: text.current,
       theme: themeRef.current,
       onChange: (next) => {
@@ -366,7 +368,7 @@ export function EditorPanel(props: EditorPanelProps) {
       };
       const clientFile = {
         uri: opened.fileUri,
-        languageId: language.languageId,
+        languageId: languageIdFor(language, file.extension),
         plainTokenTypes: language.plainTokenTypes,
       };
       let transport: LspTransport | null = null;
@@ -534,16 +536,18 @@ export function EditorPanel(props: EditorPanelProps) {
         <Banner theme={theme} text="The file was deleted. Edits are kept here." />
       ) : null}
       {fileError ? <Banner theme={theme} danger text={fileError} /> : null}
-      {server.status === "missing" || server.status === "failed" || server.status === "ended" ? (
-        <Banner
+      {server.status === "missing" ? (
+        <MissingServer
+          language={language}
           theme={theme}
-          danger={server.status !== "missing"}
-          text={server.message}
-          testID="editor-plus-server-error"
-        >
-          {server.status === "missing" ? (
-            <TextButton theme={theme} label="Settings" onPress={openSettings} />
-          ) : null}
+          message={server.message}
+          onInstalled={restart}
+          onSettings={openSettings}
+          onRetry={restart}
+        />
+      ) : null}
+      {server.status === "failed" || server.status === "ended" ? (
+        <Banner theme={theme} danger text={server.message} testID="editor-plus-server-error">
           <TextButton
             theme={theme}
             label={server.status === "ended" ? "Restart" : "Retry"}
@@ -574,6 +578,70 @@ export function EditorPanel(props: EditorPanelProps) {
         ) : null}
       </View>
     </View>
+  );
+}
+
+/**
+ * The language server is not on this host. Offer to install it (after confirming what is
+ * downloaded), show progress, and start it when the install finishes.
+ */
+function MissingServer({
+  language,
+  theme,
+  message,
+  onInstalled,
+  onSettings,
+  onRetry,
+}: {
+  language: LanguageProfile;
+  theme: PluginTheme;
+  message: string;
+  onInstalled(): void;
+  onSettings(): void;
+  onRetry(): void;
+}) {
+  const { status, error, install } = useServerStatus(language.id);
+  const [confirming, setConfirming] = useState(false);
+  const busy = installing(status);
+  const phase = status?.job?.phase;
+  const onInstalledRef = useRef(onInstalled);
+  onInstalledRef.current = onInstalled;
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (wasBusy.current && phase === "done") onInstalledRef.current();
+    wasBusy.current = busy;
+  }, [busy, phase]);
+  const offer = status?.install ?? null;
+  // The server's own reason, such as a configured path that is not executable, until an install
+  // runs.
+  let text = message;
+  if (busy || phase === "failed") text = progressText(status!);
+  else if (error) text = error;
+  return (
+    <>
+      <Banner
+        theme={theme}
+        danger={phase === "failed" || !!error}
+        text={text}
+        testID="editor-plus-server-error"
+      >
+        {offer && !busy ? (
+          <TextButton theme={theme} label="Install…" onPress={() => setConfirming(true)} />
+        ) : null}
+        <TextButton theme={theme} label="Settings" onPress={onSettings} />
+        {!busy ? <TextButton theme={theme} label="Retry" onPress={onRetry} /> : null}
+      </Banner>
+      <InstallConfirm
+        details={offer}
+        open={confirming}
+        theme={theme}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void install();
+        }}
+      />
+    </>
   );
 }
 

@@ -4,14 +4,23 @@ import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 
-// Finds a language server's executable on the daemon host.
+// Finds a language server's executable on the daemon host: the path in settings, then one the
+// plugin installed, then PATH, a login shell's PATH, and common install directories.
 
-export type ServerSource = "setting" | "path" | "shell" | "common";
+export type ServerSource = "setting" | "installed" | "path" | "shell" | "common";
+
+/** How to run a server: the executable, arguments before the server's own, and environment. */
+export interface Launch {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+}
 
 export interface ServerBinary {
   path: string;
   source: ServerSource;
   version: string | null;
+  launch: Launch;
 }
 
 export interface ServerQuery {
@@ -20,6 +29,8 @@ export interface ServerQuery {
   /** A path from settings; empty to search. */
   configured: string;
   homepage: string;
+  /** A copy the plugin installed, if any. */
+  installed?: () => Promise<{ launch: Launch; version: string; path: string } | null>;
 }
 
 const exe = (binary: string) => (process.platform === "win32" ? `${binary}.exe` : binary);
@@ -97,6 +108,7 @@ export async function findServer({
   binary,
   configured,
   homepage,
+  installed,
 }: ServerQuery): Promise<ServerBinary> {
   let path: string | null = null;
   let source: ServerSource | null = null;
@@ -113,6 +125,9 @@ export async function findServer({
     path = setting;
     source = "setting";
   } else {
+    const own = await installed?.();
+    if (own)
+      return { path: own.path, source: "installed", version: own.version, launch: own.launch };
     const searches: [ServerSource, (binary: string) => Promise<string | null>][] = [
       ["path", searchPath],
       ["shell", searchLoginShell],
@@ -128,10 +143,10 @@ export async function findServer({
   }
   if (!path || !source) {
     throw new ServerNotFoundError(
-      `${binary} was not found on the daemon host. Install it (see ${homepage}), or set its path ` +
-        "in the plugin's settings.",
+      `${binary} is not installed on the daemon host. Install it here, from ${homepage}, or set ` +
+        "its path in the plugin's settings.",
     );
   }
   const version = parseVersion(binary, await run(path, ["--version"], 5000));
-  return { path, source, version };
+  return { path, source, version, launch: { command: path, args: [] } };
 }

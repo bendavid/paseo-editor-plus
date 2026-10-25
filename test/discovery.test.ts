@@ -38,7 +38,7 @@ describe("language server discovery", () => {
     await expect(
       findServer({ binary: "no-such-server-xyz", configured: "", homepage: "https://example.org" }),
     ).rejects.toThrow(
-      "no-such-server-xyz was not found on the daemon host. Install it (see https://example.org)",
+      "no-such-server-xyz is not installed on the daemon host. Install it here, from https://example.org",
     );
   });
 

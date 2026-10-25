@@ -1,0 +1,8 @@
+{
+  "name": "editor-plus-server-vscode-langservers-extracted",
+  "private": true,
+  "description": "Installed by Editor Plus on request: vscode-langservers-extracted.",
+  "dependencies": {
+    "vscode-langservers-extracted": "4.10.0"
+  }
+}

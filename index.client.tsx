@@ -20,7 +20,7 @@ export default function contribute(client: PluginClientContext) {
         id: language.id,
         title: language.title,
         icon: language.icon,
-        files: { extensions: language.extensions },
+        files: { extensions: Object.keys(language.extensions) },
         Component: (props: PluginFilePanelProps) => (
           <EditorPlusPanel {...props} language={language} openSettings={openSettings} />
         ),

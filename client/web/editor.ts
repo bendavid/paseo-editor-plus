@@ -216,7 +216,7 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
         autocompletion(),
         highlightActiveLine(),
         highlightSelectionMatches(),
-        language.support(),
+        language.support(options.extension),
         EditorView.lineWrapping,
         keymap.of([
           ...closeBracketsKeymap,

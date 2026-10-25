@@ -33,7 +33,7 @@ function typstSupport(): LanguageSupport {
 }
 
 export const typst: EditorLanguage = {
-  support: typstSupport,
+  support: () => typstSupport(),
   tags: [
     { tag: typstTags.listMarker, color: "keyword" },
     { tag: typstTags.mathDelimiter, color: "math" },

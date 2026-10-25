@@ -26,9 +26,10 @@ export interface PollResult {
 
 export interface SessionOptions {
   id: string;
-  /** The language server's executable and arguments, such as tinymist and ["lsp"]. */
-  binary: string;
+  /** The language server's executable, arguments, and extra environment. */
+  command: string;
   args: readonly string[];
+  env?: Record<string, string>;
   /** Shown in messages, such as "tinymist". */
   name: string;
   root: string;
@@ -55,11 +56,15 @@ export class EditorSession {
   private readonly name: string;
   private readonly previewKind: PreviewKind | null;
 
-  constructor({ id, binary, args, name, root, preview }: SessionOptions) {
+  constructor({ id, command, args, env, name, root, preview }: SessionOptions) {
     this.id = id;
     this.name = name;
     this.previewKind = preview;
-    this.process = spawn(binary, [...args], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+    this.process = spawn(command, [...args], {
+      cwd: root,
+      env: env ? { ...process.env, ...env } : process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     this.process.stdout.on("data", (chunk: Buffer) => {
       for (const message of this.reader.push(chunk)) this.fromServer(message);
     });

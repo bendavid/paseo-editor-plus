@@ -33,7 +33,7 @@ describe.runIf(tinymistPath())("EditorSession with the installed tinymist", () =
     writeFileSync(file, "= Hello\n#lorem(10)\n");
     const session = new EditorSession({
       id: "t",
-      binary: tinymistPath()!,
+      command: tinymistPath()!,
       args: ["lsp"],
       name: "tinymist",
       root,

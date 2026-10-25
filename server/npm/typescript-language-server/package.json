@@ -1,0 +1,9 @@
+{
+  "name": "editor-plus-server-typescript-language-server",
+  "private": true,
+  "description": "Installed by Editor Plus on request: typescript-language-server.",
+  "dependencies": {
+    "typescript-language-server": "6.0.2",
+    "typescript": "5.9.3"
+  }
+}

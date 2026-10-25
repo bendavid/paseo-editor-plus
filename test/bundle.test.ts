@@ -1,6 +1,7 @@
 import { build } from "esbuild";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
+import { LANGUAGES } from "../shared/languages";
 
 // Mirrors the client options in Paseo's plugin compiler (packages/server/src/server/plugins/compiler.ts).
 const HOST_MODULES = [
@@ -38,7 +39,9 @@ describe("client bundle", () => {
 
   it("evaluates without a DOM, as the native apps do, and registers the panel", async () => {
     const bundle = await compileClient();
-    expect(bundle.length).toBeLessThan(1_500_000);
+    // Paseo does not minify plugin bundles, and the native apps parse (but never run) the editor
+    // and its grammars. Loading them from the plugin server on web would shrink this.
+    expect(bundle.length).toBeLessThan(2_500_000);
     // Host modules are stand-ins; any property is a no-op function.
     const stub: object = new Proxy(() => stub, { get: () => stub, apply: () => stub });
     const module = { exports: {} as { default?: (client: unknown) => unknown } };
@@ -57,6 +60,12 @@ describe("client bundle", () => {
       ),
     };
     module.exports.default?.(client);
-    expect(registered).toEqual(["settings:servers", "panel:typst:typ"]);
+    expect(registered).toEqual([
+      "settings:servers",
+      ...LANGUAGES.map(
+        (language) => `panel:${language.id}:${Object.keys(language.extensions).join(",")}`,
+      ),
+    ]);
+    expect(registered).toContain("panel:typst:typ");
   });
 });

@@ -14,7 +14,7 @@ const classes = tagHighlighter([
 ]);
 
 function highlight(source: string): Record<string, string[]> {
-  const support = typst.support() as LanguageSupport;
+  const support = typst.support("typ") as LanguageSupport;
   const tree = support.language.parser.parse(source);
   const found: Record<string, string[]> = {};
   highlightTree(tree, classes, (from, to, cls) => {

@@ -3,18 +3,23 @@
 Paseo bundles these packages into the plugin's client code when it builds the plugin. Their
 license texts ship in `node_modules/<package>/LICENSE` after `npm ci`.
 
-| Package                                                                                                                                                                                 | License    | Copyright                                       |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------- |
-| `@codemirror/autocomplete`, `@codemirror/commands`, `@codemirror/language`, `@codemirror/lint`, `@codemirror/lsp-client`, `@codemirror/search`, `@codemirror/state`, `@codemirror/view` | MIT        | Marijn Haverbeke and others                     |
-| `@lezer/common`, `@lezer/highlight`                                                                                                                                                     | MIT        | Marijn Haverbeke and others                     |
-| `style-mod`, `w3c-keyname`, `crelt`, `@marijn/find-cluster-break`                                                                                                                       | MIT        | Marijn Haverbeke                                |
-| `marked`                                                                                                                                                                                | MIT        | Christopher Jeffrey and the marked contributors |
-| `codemirror-lang-typst` (its `lezer` entry; the WebAssembly parser is not used)                                                                                                         | Apache-2.0 | kxxt and contributors                           |
+| Package                                                                                                                                                                                                                                                                                                                                 | License    | Copyright                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------- |
+| `@codemirror/autocomplete`, `@codemirror/commands`, `@codemirror/language`, `@codemirror/lint`, `@codemirror/lsp-client`, `@codemirror/search`, `@codemirror/state`, `@codemirror/view`                                                                                                                                                 | MIT        | Marijn Haverbeke and others                     |
+| `@codemirror/lang-cpp`, `@codemirror/lang-css`, `@codemirror/lang-go`, `@codemirror/lang-html`, `@codemirror/lang-javascript`, `@codemirror/lang-json`, `@codemirror/lang-less`, `@codemirror/lang-markdown`, `@codemirror/lang-python`, `@codemirror/lang-rust`, `@codemirror/lang-sass`, `@codemirror/legacy-modes` (its `stex` mode) | MIT        | Marijn Haverbeke and others                     |
+| `@lezer/common`, `@lezer/highlight`, `@lezer/lr`, and the `@lezer` grammars for C++, CSS, Go, HTML, JavaScript, JSON, Markdown, Python, Rust, and Sass                                                                                                                                                                                  | MIT        | Marijn Haverbeke and others                     |
+| `style-mod`, `w3c-keyname`, `crelt`, `@marijn/find-cluster-break`                                                                                                                                                                                                                                                                       | MIT        | Marijn Haverbeke                                |
+| `marked`                                                                                                                                                                                                                                                                                                                                | MIT        | Christopher Jeffrey and the marked contributors |
+| `codemirror-lang-typst` (its `lezer` entry; the WebAssembly parser is not used)                                                                                                                                                                                                                                                         | Apache-2.0 | kxxt and contributors                           |
 
 `client/web/semantic-tokens.ts` follows the approach of `semantic-tokens.ts` in
 [Ahdeyyy/typwriter](https://github.com/Ahdeyyy/typwriter) (MIT, Copyright (c) Ahdeyyy). No code is
 copied from it.
 
-Language servers and their preview pages are not included. The plugin runs the servers installed on
+Language servers and their preview pages are not included. The plugin runs servers installed on
 the daemon host, such as tinymist (Apache-2.0, https://github.com/Myriad-Dreamin/tinymist), and shows
-the preview pages they serve.
+the preview pages they serve. When asked, it installs pinned versions from their publishers into the
+user's Paseo data folder; each server keeps its own license, shown before it is installed:
+tinymist (Apache-2.0), basedpyright (MIT), rust-analyzer (MIT OR Apache-2.0), gopls (BSD-3-Clause),
+clangd (Apache-2.0 WITH LLVM-exception), typescript-language-server (Apache-2.0) with TypeScript
+(Apache-2.0), texlab (MIT), marksman (MIT), and vscode-langservers-extracted (MIT).

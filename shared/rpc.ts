@@ -96,14 +96,56 @@ export const closeSession = defineRpc({
   output: z.object({}),
 });
 
+const installPhase = z.enum(["downloading", "extracting", "installing", "done", "failed"]);
+
 export const serverStatus = defineRpc({
   name: "editorplus.server.status",
   input: z.object({ language: languageId }),
   output: z.object({
     path: z.string().nullable(),
     version: z.string().nullable(),
-    /** Where the binary was found. */
-    source: z.enum(["setting", "path", "shell", "common"]).nullable(),
+    /** Where the server in use was found. */
+    source: z.enum(["setting", "installed", "path", "shell", "common"]).nullable(),
     error: z.string().nullable(),
+    /** What installing would download, when the plugin can install this server here. */
+    install: z
+      .object({
+        name: z.string(),
+        version: z.string(),
+        license: z.string(),
+        homepage: z.string(),
+        source: z.string(),
+        size: z.number().nullable(),
+        destination: z.string(),
+        needs: z.enum(["npm", "go"]).nullable(),
+      })
+      .nullable(),
+    /** Why the plugin cannot install it here, when it cannot. */
+    installUnavailable: z.string().nullable(),
+    /** The copy the plugin installed, if any. */
+    installed: z.object({ version: z.string(), folder: z.string() }).nullable(),
+    /** The latest install of this server since the daemon started. */
+    job: z
+      .object({
+        phase: installPhase,
+        received: z.number(),
+        total: z.number().nullable(),
+        error: z.string().nullable(),
+      })
+      .nullable(),
   }),
+});
+
+/** Starts installing the language's server; the app polls `serverStatus` for progress. */
+export const installServer = defineRpc({
+  name: "editorplus.server.install",
+  input: z.object({ language: languageId }),
+  output: z.object({ started: z.boolean(), error: z.string().nullable() }),
+});
+
+/** Deletes the copy of the language's server that the plugin installed. */
+export const removeServer = defineRpc({
+  name: "editorplus.server.remove",
+  input: z.object({ language: languageId }),
+  output: z.object({}),
 });
