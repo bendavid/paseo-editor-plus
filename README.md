@@ -18,7 +18,8 @@ by a language server on the daemon host, with a live preview beside it where the
 - for Typst and LaTeX, a PDF built on every save when switched on in the settings, or with the
   toolbar's **Compile PDF**;
 - spellchecking by the browser's or desktop app's checker, of prose only: text and comments in
-  Typst, LaTeX, and Markdown (on by default), comments in code (off by default);
+  Typst, LaTeX, and Markdown (on by default), comments in code (off by default), switched per
+  file from the toolbar;
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
@@ -147,7 +148,7 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
    `server/previews/` to recognise the port it announces.
 5. For building a PDF, add `compile` to the profile: the server settings for building on save, and
    the command or request that builds now.
-6. Set `spellcheck` in the profile (on for prose languages) and `spelling` in its grammar entry:
+6. Set `spellcheck` in the profile (whether files start with spelling checked) and `spelling` in its grammar entry:
    which parts of the file are prose.
 
 ## Limits

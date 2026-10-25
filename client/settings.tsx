@@ -150,17 +150,6 @@ function ServerSection({
             onValueChange={(compileOnSave) => update({ compileOnSave })}
           />
         ) : null}
-        <SettingsSwitch
-          label="Check spelling"
-          hint={
-            language.spellcheck
-              ? "Underlines misspelled words in text and comments, skipping code, math, and references."
-              : "Underlines misspelled words in comments."
-          }
-          value={entry.spellcheck ?? language.spellcheck}
-          disabled={settings.saving}
-          onValueChange={(spellcheck) => update({ spellcheck })}
-        />
         <SettingsInput
           label={`${name} path`}
           hint="Absolute path on the daemon host. Leave empty to use the installed copy or search PATH, your login shell, and common install directories."

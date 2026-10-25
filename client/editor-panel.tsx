@@ -62,6 +62,8 @@ const savedSchema = z.object({
   preview: z.boolean().optional(),
   /** Invert the preview's colors. Null, from earlier versions, means off. */
   invert: z.boolean().nullable().default(false),
+  /** Check spelling in this file. Unset follows the language (on for prose, off for code). */
+  spellcheck: z.boolean().nullable().optional(),
 });
 type Saved = z.infer<typeof savedSchema>;
 const defaultSaved: Saved = { view: "split", invert: false };
@@ -113,15 +115,13 @@ export function EditorPanel(props: EditorPanelProps) {
   const invert = saved.invert ?? false;
   const invertRef = useRef(invert);
   invertRef.current = invert;
+  const spellcheck = saved.spellcheck ?? language.spellcheck;
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
   const settings = useSettings(serverSettings);
   const compileOnSave =
     settings.status === "ready" && settings.values.servers[language.id]?.compileOnSave === true;
-  const spellcheck =
-    (settings.status === "ready" ? settings.values.servers[language.id]?.spellcheck : undefined) ??
-    language.spellcheck;
   const spellcheckRef = useRef(spellcheck);
   spellcheckRef.current = spellcheck;
 
@@ -489,12 +489,20 @@ export function EditorPanel(props: EditorPanelProps) {
   // --- Toolbar actions.
 
   const setView = useCallback(
-    (next: ViewMode) => setSaved({ view: next, invert: savedRef.current.invert }),
+    (next: ViewMode) =>
+      setSaved({
+        view: next,
+        invert: savedRef.current.invert,
+        spellcheck: savedRef.current.spellcheck,
+      }),
     [setSaved],
   );
   const toggleInvert = useCallback(() => {
     setSaved({ ...savedRef.current, invert: !invert });
   }, [invert, setSaved]);
+  const toggleSpellcheck = useCallback(() => {
+    setSaved({ ...savedRef.current, spellcheck: !spellcheck });
+  }, [spellcheck, setSaved]);
   const showInPreview = useCallback(() => {
     const position = editor.current?.cursor();
     if (position) scrollPreview(position);
@@ -574,6 +582,16 @@ export function EditorPanel(props: EditorPanelProps) {
               tooltip="Format document (Shift+Alt+F)"
               disabled={!ready}
               onPress={format}
+            />
+            <IconButton
+              theme={theme}
+              icon="SpellCheck"
+              label={spellcheck ? "Stop checking spelling" : "Check spelling"}
+              tooltip={
+                spellcheck ? "Checking spelling in this file" : "Check spelling in this file"
+              }
+              selected={spellcheck}
+              onPress={toggleSpellcheck}
             />
             {language.compile ? (
               <IconButton

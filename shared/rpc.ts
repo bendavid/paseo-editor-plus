@@ -18,8 +18,6 @@ export const serverSettings = defineSettings({
           path: z.string().default(""),
           /** For languages that build a PDF (Typst, LaTeX): build it whenever the file is saved. */
           compileOnSave: z.boolean().default(false),
-          /** Unset follows the language's default (shared/languages.ts). */
-          spellcheck: z.boolean().optional(),
         }),
       )
       .default({}),

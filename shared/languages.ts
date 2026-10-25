@@ -52,7 +52,7 @@ export interface LanguageProfile {
    * arrives a round trip late and lingers while typing.
    */
   plainTokenTypes: readonly string[];
-  /** Whether the editor checks spelling until the user chooses: on for prose, off for code. */
+  /** Whether a file's spelling is checked until its toolbar says otherwise: on for prose. */
   spellcheck: boolean;
 }
 
