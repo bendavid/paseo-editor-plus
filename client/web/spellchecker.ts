@@ -194,7 +194,15 @@ export function spellchecker(rules: SpellingRules, service: SpellingService): Ex
       let retry = false;
       try {
         const answer = await service.check(unknown);
-        if (answer.state !== "ready") {
+        if (answer.state === "ready") {
+          service.onStatus(null);
+          const byWord = new Map<string, Issue[]>(unknown.map((word) => [word, []]));
+          for (const issue of answer.issues) {
+            byWord.get(unknown[issue.index])?.push({ offset: issue.offset, length: issue.length });
+          }
+          for (const [word, issues] of byWord) results.set(word, issues);
+        } else {
+          // Downloading cspell, or it failed: say so, and ask again shortly.
           service.onStatus(
             componentMessage({
               id: "spelling",
@@ -205,14 +213,7 @@ export function spellchecker(rules: SpellingRules, service: SpellingService): Ex
             }),
           );
           retry = true;
-          return;
         }
-        service.onStatus(null);
-        const byWord = new Map<string, Issue[]>(unknown.map((word) => [word, []]));
-        for (const issue of answer.issues) {
-          byWord.get(unknown[issue.index])?.push({ offset: issue.offset, length: issue.length });
-        }
-        for (const [word, issues] of byWord) results.set(word, issues);
       } catch (error) {
         service.onStatus(`Spelling: ${error instanceof Error ? error.message : String(error)}`);
         retry = true;
