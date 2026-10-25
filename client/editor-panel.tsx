@@ -29,7 +29,6 @@ import {
   sendPreview,
 } from "../shared/rpc";
 import type { LanguageProfile } from "../shared/languages";
-import { isDark } from "./colors";
 import { messageOf, SessionConnection } from "./connection";
 import { LspTransport } from "./lsp-transport";
 import { previewProvider } from "./previews";
@@ -49,10 +48,10 @@ const SCROLL_INTERVAL_MS = 120;
 
 const savedSchema = z.object({
   preview: z.boolean().default(true),
-  /** Invert the preview's colors; null follows the theme. */
-  invert: z.boolean().nullable().default(null),
+  /** Invert the preview's colors. Null, from earlier versions, means off. */
+  invert: z.boolean().nullable().default(false),
 });
-const defaultSaved = { preview: true, invert: null };
+const defaultSaved = { preview: true, invert: false };
 
 type FileState = "loading" | "ready" | "conflict" | "deleted";
 type ServerState =
@@ -93,7 +92,8 @@ export function EditorPanel(props: EditorPanelProps) {
   const [saved, setSaved] = useTabState(tab, savedSchema, defaultSaved);
   const savedRef = useRef(saved);
   savedRef.current = saved;
-  const invert = saved.invert ?? isDark(theme);
+  // Off unless the reader turns it on. Tabs saved before this default have null.
+  const invert = saved.invert ?? false;
   const invertRef = useRef(invert);
   invertRef.current = invert;
   const themeRef = useRef(theme);
