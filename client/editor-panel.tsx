@@ -827,7 +827,7 @@ export function EditorPanel(props: EditorPanelProps) {
         <View
           style={[
             styles.pane,
-            split ? { flexGrow: 1 - ratio, flexBasis: 0 } : null,
+            { flexGrow: split ? 1 - ratio : 1 },
             showEditor ? null : styles.hidden,
           ]}
         >
@@ -857,7 +857,7 @@ export function EditorPanel(props: EditorPanelProps) {
           />
         ) : null}
         {showPreview ? (
-          <View style={[styles.pane, split ? { flexGrow: ratio, flexBasis: 0 } : null]}>
+          <View style={[styles.pane, { flexGrow: split ? ratio : 1 }]}>
             {split ? (
               <PaneGrip theme={theme} pane="preview" onDock={(event) => dock("preview", event)} />
             ) : null}
@@ -1141,7 +1141,9 @@ function panelStyles(theme: PluginTheme) {
     status: { flex: 1, fontSize: 12, color: theme.colors.foregroundMuted },
     group: { flexDirection: "row" as const, alignItems: "center" as const, gap: 2 },
     body: { flex: 1, minHeight: 0 },
-    pane: { flex: 1, minWidth: 0, minHeight: 0 },
+    // Longhands only: the split sets flexGrow, and React clearing a longhand that overrode the
+    // `flex` shorthand leaves no grow at all, so a pane shown alone shrank to its content.
+    pane: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, minHeight: 0 },
     // The editor stays mounted while hidden: its language server session and text live on.
     hidden: { display: "none" as const },
     segment: {
