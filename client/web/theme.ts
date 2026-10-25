@@ -113,6 +113,9 @@ export interface LanguageTags {
   tags: readonly { tag: Tag | Tag[]; color: keyof Palette }[];
 }
 
+const MONOSPACE = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace";
+const SANS = "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
+
 /** The editor's text size; tooltips and menus use it too. */
 export const EDITOR_FONT_SIZE_PX = 13;
 
@@ -126,7 +129,10 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
       {
         // One text size for the editor; tooltips and menus follow it. Tooltips live in a container
         // in document.body that carries the theme's classes too, so "&" holds only what both share.
-        "&": { "--editor-plus-font-size": `${EDITOR_FONT_SIZE_PX}px` },
+        "&": {
+          "--editor-plus-font-size": `${EDITOR_FONT_SIZE_PX}px`,
+          "--editor-plus-mono": MONOSPACE,
+        },
         "&.cm-editor": {
           height: "100%",
           color: colors.foreground,
@@ -134,7 +140,7 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
         },
         ".cm-scroller": {
           overflow: "auto",
-          fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
+          fontFamily: "var(--editor-plus-mono)",
           fontSize: "var(--editor-plus-font-size)",
           lineHeight: "1.55",
         },
@@ -160,7 +166,9 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           backgroundColor: `color-mix(in srgb, ${colors.accent} ${dark ? 38 : 22}%, transparent)`,
         },
         // Tooltips sit over the code: a raised surface, a firm border, and a shadow set them apart.
+        // Outside the app's own elements, tooltips set their fonts rather than inherit the page's.
         ".cm-tooltip": {
+          fontFamily: SANS,
           fontSize: "var(--editor-plus-font-size)",
           lineHeight: "1.45",
           backgroundColor: colors.surface2,
@@ -213,7 +221,8 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           color: colors.foregroundMuted,
         },
         // Code in documentation a touch smaller than its prose, as in the editor's own font.
-        ".cm-lsp-documentation code, .cm-lsp-documentation pre": { fontSize: "0.92em" },
+        ".cm-lsp-documentation code, .cm-lsp-documentation pre, .cm-tooltip-autocomplete ul, .cm-lsp-signature":
+          { fontFamily: "var(--editor-plus-mono)", fontSize: "0.92em" },
       },
       { dark },
     ),
