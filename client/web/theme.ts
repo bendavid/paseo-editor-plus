@@ -124,12 +124,13 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
   return [
     EditorView.theme(
       {
-        // One text size for the editor; tooltips and menus follow it.
-        "&": {
+        // One text size for the editor; tooltips and menus follow it. Tooltips live in a container
+        // in document.body that carries the theme's classes too, so "&" holds only what both share.
+        "&": { "--editor-plus-font-size": `${EDITOR_FONT_SIZE_PX}px` },
+        "&.cm-editor": {
           height: "100%",
           color: colors.foreground,
           backgroundColor: colors.surface0,
-          "--editor-plus-font-size": `${EDITOR_FONT_SIZE_PX}px`,
         },
         ".cm-scroller": {
           overflow: "auto",
@@ -187,6 +188,14 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           backgroundColor: colors.surface1,
         },
         // Documentation links take the browser's default blue otherwise, unreadable when dark.
+        ".cm-lsp-documentation h1, .cm-lsp-documentation h2, .cm-lsp-documentation h3": {
+          fontSize: "1.1em",
+          margin: "8px 0 2px",
+        },
+        ".cm-lsp-documentation h4, .cm-lsp-documentation h5, .cm-lsp-documentation h6": {
+          fontSize: "1em",
+          margin: "6px 0 2px",
+        },
         ".cm-tooltip a, .cm-tooltip a:visited": { color: c.link, textDecoration: "underline" },
         ".cm-tooltip a:hover": { textDecoration: "none" },
         ".cm-lsp-documentation hr": {

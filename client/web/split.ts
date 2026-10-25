@@ -1,7 +1,7 @@
 import type { DockSide, SplitDockOptions, SplitResizeOptions } from "../web-contract";
 
-// Dragging the divider between the editor and the preview: resizing by the line, docking the
-// preview on another side by the grip. While a drag runs, a transparent shield covers the page, so
+// Dragging in the split between the editor and the preview: the divider resizes, and the grip at
+// the top of either pane docks that pane on another side. While a drag runs, a transparent shield covers the page, so
 // the preview's iframe (Typst) or canvas cannot swallow the pointer, and the editor sees no events.
 
 /** The smallest share either side may get, and the smallest size in pixels. */
@@ -135,11 +135,18 @@ export function resizeSplit(options: SplitResizeOptions): void {
   });
 }
 
-const LABELS: Readonly<Record<DockSide, string>> = {
-  left: "Preview on the left",
-  right: "Preview on the right",
-  top: "Preview above",
-  bottom: "Preview below",
+const PLACES: Readonly<Record<DockSide, string>> = {
+  left: "on the left",
+  right: "on the right",
+  top: "above",
+  bottom: "below",
+};
+
+export const OPPOSITE: Readonly<Record<DockSide, DockSide>> = {
+  left: "right",
+  right: "left",
+  top: "bottom",
+  bottom: "top",
 };
 
 export function dockSplit(options: SplitDockOptions): void {
@@ -173,11 +180,16 @@ export function dockSplit(options: SplitDockOptions): void {
   });
   overlay.appendChild(zone);
   document.body.appendChild(overlay);
-  let side = options.side;
+  // `side` and the zone are the dragged pane's: the preview's, or the editor's opposite it.
+  const editor = options.pane === "editor";
+  const name = editor ? "Editor" : "Preview";
+  const own = editor ? 1 - options.ratio : options.ratio;
+  const start = editor ? OPPOSITE[options.side] : options.side;
+  let side = start;
   const show = (target: DockSide) => {
     side = target;
-    const share = `${options.ratio * 100}%`;
-    const rest = `${(1 - options.ratio) * 100}%`;
+    const share = `${own * 100}%`;
+    const rest = `${(1 - own) * 100}%`;
     const place: Record<DockSide, Partial<CSSStyleDeclaration>> = {
       left: { left: "0", top: "0", width: share, height: "100%" },
       right: { left: rest, top: "0", width: share, height: "100%" },
@@ -185,17 +197,17 @@ export function dockSplit(options: SplitDockOptions): void {
       bottom: { left: "0", top: rest, width: "100%", height: share },
     };
     Object.assign(zone.style, place[target]);
-    zone.textContent = LABELS[target];
+    zone.textContent = `${name} ${PLACES[target]}`;
     zone.dataset.side = target;
   };
-  show(options.side);
+  show(start);
   track(event, "grabbing", {
     move(x, y) {
-      show(sideAt(rect, x, y, options.side));
+      show(sideAt(rect, x, y, start));
     },
     end(_x, _y, cancelled) {
       overlay.remove();
-      if (!cancelled) options.onDock(side);
+      if (!cancelled) options.onDock(editor ? OPPOSITE[side] : side);
     },
   });
 }

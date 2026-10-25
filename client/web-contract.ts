@@ -177,8 +177,10 @@ export interface SplitResizeOptions extends SplitDragOptions {
 }
 
 export interface SplitDockOptions extends SplitDragOptions {
+  /** The pane being dragged. */
+  pane: "editor" | "preview";
   accent: string;
-  /** Released over a side; not called when cancelled with Escape. */
+  /** Released: the preview's new side (opposite the editor's); not called on Escape. */
   onDock(side: DockSide): void;
 }
 

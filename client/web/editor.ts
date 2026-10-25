@@ -40,6 +40,7 @@ import {
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  tooltips,
   ViewPlugin,
 } from "@codemirror/view";
 import { charToUtf16Column, utf16ToCharColumn } from "../columns";
@@ -239,6 +240,8 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
         autocompletion(),
         highlightActiveLine(),
         highlightSelectionMatches(),
+        // In the page's body, so no pane (the preview beside the editor) or divider covers them.
+        tooltips({ parent: document.body }),
         language.support(options.extension),
         EditorView.lineWrapping,
         keymap.of([

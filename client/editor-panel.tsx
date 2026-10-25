@@ -683,6 +683,16 @@ export function EditorPanel(props: EditorPanelProps) {
     : (saved.dock ?? "right");
   const ratio = liveRatio ?? saved.ratio ?? 0.5;
   const sideways = side === "left" || side === "right";
+  const dock = (pane: "editor" | "preview", event: unknown) =>
+    web.dockSplit({
+      container: splitHost.current,
+      event,
+      pane,
+      side,
+      ratio,
+      accent: theme.colors.accent,
+      onDock: (next) => setSaved({ ...savedRef.current, dock: next }),
+    });
   // The panes keep their DOM order (editor, divider, preview); the direction puts the preview first
   // on the left or top. Moving the preview's element would reload the Typst preview's iframe.
   const direction = sideways
@@ -821,6 +831,9 @@ export function EditorPanel(props: EditorPanelProps) {
             showEditor ? null : styles.hidden,
           ]}
         >
+          {split ? (
+            <PaneGrip theme={theme} pane="editor" onDock={(event) => dock("editor", event)} />
+          ) : null}
           <View ref={editorHost} style={styles.fill} testID="editor-plus-editor" />
           {fileState === "loading" && !fileError ? <Loading /> : null}
         </View>
@@ -841,20 +854,13 @@ export function EditorPanel(props: EditorPanelProps) {
                 },
               })
             }
-            onDock={(event) =>
-              web.dockSplit({
-                container: splitHost.current,
-                event,
-                side,
-                ratio,
-                accent: theme.colors.accent,
-                onDock: (dock) => setSaved({ ...savedRef.current, dock }),
-              })
-            }
           />
         ) : null}
         {showPreview ? (
           <View style={[styles.pane, split ? { flexGrow: ratio, flexBasis: 0 } : null]}>
+            {split ? (
+              <PaneGrip theme={theme} pane="preview" onDock={(event) => dock("preview", event)} />
+            ) : null}
             <View ref={previewHost} style={styles.fill} testID="editor-plus-preview" />
             {previewLoading ? (
               <View style={styles.overlay}>
@@ -981,38 +987,30 @@ function IconButton({ theme, icon, label, tooltip, disabled, selected, onPress }
 const cursor = (value: "col-resize" | "row-resize" | "grab") =>
   value as unknown as ViewStyle["cursor"];
 
-/**
- * The line between the editor and the preview: drag it to resize (double-click for half and half),
- * or drag its grip to dock the preview on another side.
- */
+/** The line between the editor and the preview: drag to resize, double-click for half and half. */
 function SplitDivider({
   theme,
   sideways,
   onResize,
-  onDock,
 }: {
   theme: PluginTheme;
   sideways: boolean;
   onResize(event: unknown): void;
-  onDock(event: unknown): void;
 }) {
-  const lineHover = useTooltip({ text: "Drag to resize · double-click for half and half" });
-  const gripHover = useTooltip({ text: "Drag to move the preview" });
+  const hover = useTooltip({ text: "Drag to resize · double-click for half and half" });
   return (
     <View
-      ref={lineHover.ref}
+      ref={hover.ref}
       testID="editor-plus-divider"
       accessibilityLabel="Resize the preview"
-      onPointerEnter={lineHover.onHoverIn}
-      onPointerLeave={lineHover.onHoverOut}
+      onPointerEnter={hover.onHoverIn}
+      onPointerLeave={hover.onHoverOut}
       onPointerDown={(event) => {
-        lineHover.onPressIn();
+        hover.onPressIn();
         if (event.nativeEvent.button === 0) onResize(event.nativeEvent);
       }}
       style={{
         flexShrink: 0,
-        alignItems: "center",
-        justifyContent: "center",
         zIndex: 2,
         ...(sideways
           ? { width: 7, marginHorizontal: -3, cursor: cursor("col-resize") }
@@ -1029,34 +1027,44 @@ function SplitDivider({
             : { left: 0, right: 0, top: 3, height: 1 }),
         }}
       />
-      <View
-        ref={gripHover.ref}
-        testID="editor-plus-grip"
-        accessibilityLabel="Move the preview"
-        onPointerEnter={gripHover.onHoverIn}
-        onPointerLeave={gripHover.onHoverOut}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-          gripHover.onPressIn();
-          if (event.nativeEvent.button === 0) onDock(event.nativeEvent);
-        }}
-        style={{
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 4,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface2,
-          cursor: cursor("grab"),
-          ...(sideways ? { width: 14, height: 36 } : { width: 36, height: 14 }),
-        }}
-      >
-        <Icon
-          name={sideways ? "GripVertical" : "GripHorizontal"}
-          size={12}
-          color={theme.colors.foregroundMuted}
-        />
-      </View>
+    </View>
+  );
+}
+
+/** A bar at the top of a pane in the split: drag it to dock the pane on another side. */
+function PaneGrip({
+  theme,
+  pane,
+  onDock,
+}: {
+  theme: PluginTheme;
+  pane: "editor" | "preview";
+  onDock(event: unknown): void;
+}) {
+  const hover = useTooltip({ text: `Drag to move the ${pane}` });
+  return (
+    <View
+      ref={hover.ref}
+      testID={`editor-plus-grip-${pane}`}
+      accessibilityLabel={`Move the ${pane}`}
+      onPointerEnter={hover.onHoverIn}
+      onPointerLeave={hover.onHoverOut}
+      onPointerDown={(event) => {
+        hover.onPressIn();
+        if (event.nativeEvent.button === 0) onDock(event.nativeEvent);
+      }}
+      style={{
+        height: 14,
+        flexShrink: 0,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: theme.colors.surface1,
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border,
+        cursor: cursor("grab"),
+      }}
+    >
+      <Icon name="GripHorizontal" size={12} color={theme.colors.foregroundMuted} />
     </View>
   );
 }
