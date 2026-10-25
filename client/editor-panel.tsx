@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View, type ViewStyle } from "react-native";
 import { z } from "zod";
 import {
   addSpellingWord,
@@ -54,6 +54,7 @@ import { TooltipProvider, useTooltip } from "./tooltip";
 import type {
   CharPosition,
   CodeEditor,
+  DockSide,
   LanguageClient,
   SpellingService,
   WebModules,
@@ -67,7 +68,13 @@ const SCROLL_INTERVAL_MS = 120;
 const VIEW_MODES = ["editor", "split", "preview"] as const;
 type ViewMode = (typeof VIEW_MODES)[number];
 
+const DOCK_SIDES = ["left", "right", "top", "bottom"] as const;
+
 const savedSchema = z.object({
+  /** Where the preview sits in the split; compact layouts stack it above or below. */
+  dock: z.enum(DOCK_SIDES).optional(),
+  /** The preview's share of the split. */
+  ratio: z.number().min(0.05).max(0.95).optional(),
   /** Which panes show, for a language with a preview. */
   view: z.enum(VIEW_MODES).optional(),
   /** Tabs saved before the three-way choice: false showed the editor alone. */
@@ -185,6 +192,9 @@ export function EditorPanel(props: EditorPanelProps) {
 
   const panel = useRef<View>(null);
   const editorHost = useRef<View>(null);
+  const splitHost = useRef<View>(null);
+  /** The split's share while the divider is dragged; saved to the tab once released. */
+  const [liveRatio, setLiveRatio] = useState<number | null>(null);
   const previewHost = useRef<View>(null);
   const editor = useRef<CodeEditor | null>(null);
   const text = useRef("");
@@ -665,6 +675,23 @@ export function EditorPanel(props: EditorPanelProps) {
   useEffect(() => stopPreview, [stopPreview]);
   // Until the preview can show (no server yet), keep the editor rather than an empty panel.
   const showEditor = mode !== "preview" || !showPreview;
+  const split = showEditor && showPreview;
+  const side: DockSide = layout.compact
+    ? saved.dock === "left" || saved.dock === "top"
+      ? "top"
+      : "bottom"
+    : (saved.dock ?? "right");
+  const ratio = liveRatio ?? saved.ratio ?? 0.5;
+  const sideways = side === "left" || side === "right";
+  // The panes keep their DOM order (editor, divider, preview); the direction puts the preview first
+  // on the left or top. Moving the preview's element would reload the Typst preview's iframe.
+  const direction = sideways
+    ? side === "left"
+      ? ("row-reverse" as const)
+      : ("row" as const)
+    : side === "top"
+      ? ("column-reverse" as const)
+      : ("column" as const);
   let status: string;
   if (server.status === "starting") status = `Starting ${serverName}…`;
   else if (server.status === "ready")
@@ -786,18 +813,48 @@ export function EditorPanel(props: EditorPanelProps) {
           />
         </Banner>
       ) : null}
-      <View style={[styles.body, layout.compact ? styles.column : styles.row]}>
-        <View style={[styles.pane, showEditor ? null : styles.hidden]}>
+      <View ref={splitHost} style={[styles.body, { flexDirection: direction }]}>
+        <View
+          style={[
+            styles.pane,
+            split ? { flexGrow: 1 - ratio, flexBasis: 0 } : null,
+            showEditor ? null : styles.hidden,
+          ]}
+        >
           <View ref={editorHost} style={styles.fill} testID="editor-plus-editor" />
           {fileState === "loading" && !fileError ? <Loading /> : null}
         </View>
+        {split ? (
+          <SplitDivider
+            theme={theme}
+            sideways={sideways}
+            onResize={(event) =>
+              web.resizeSplit({
+                container: splitHost.current,
+                event,
+                side,
+                ratio,
+                onRatio: setLiveRatio,
+                onEnd: (next) => {
+                  setLiveRatio(null);
+                  setSaved({ ...savedRef.current, ratio: next });
+                },
+              })
+            }
+            onDock={(event) =>
+              web.dockSplit({
+                container: splitHost.current,
+                event,
+                side,
+                ratio,
+                accent: theme.colors.accent,
+                onDock: (dock) => setSaved({ ...savedRef.current, dock }),
+              })
+            }
+          />
+        ) : null}
         {showPreview ? (
-          <View
-            style={[
-              styles.pane,
-              showEditor ? (layout.compact ? styles.previewBelow : styles.previewBeside) : null,
-            ]}
-          >
+          <View style={[styles.pane, split ? { flexGrow: ratio, flexBasis: 0 } : null]}>
             <View ref={previewHost} style={styles.fill} testID="editor-plus-preview" />
             {previewLoading ? (
               <View style={styles.overlay}>
@@ -920,6 +977,90 @@ function IconButton({ theme, icon, label, tooltip, disabled, selected, onPress }
   );
 }
 
+/** React Native Web passes any CSS cursor through; React Native's types know only two. */
+const cursor = (value: "col-resize" | "row-resize" | "grab") =>
+  value as unknown as ViewStyle["cursor"];
+
+/**
+ * The line between the editor and the preview: drag it to resize (double-click for half and half),
+ * or drag its grip to dock the preview on another side.
+ */
+function SplitDivider({
+  theme,
+  sideways,
+  onResize,
+  onDock,
+}: {
+  theme: PluginTheme;
+  sideways: boolean;
+  onResize(event: unknown): void;
+  onDock(event: unknown): void;
+}) {
+  const lineHover = useTooltip({ text: "Drag to resize · double-click for half and half" });
+  const gripHover = useTooltip({ text: "Drag to move the preview" });
+  return (
+    <View
+      ref={lineHover.ref}
+      testID="editor-plus-divider"
+      accessibilityLabel="Resize the preview"
+      onPointerEnter={lineHover.onHoverIn}
+      onPointerLeave={lineHover.onHoverOut}
+      onPointerDown={(event) => {
+        lineHover.onPressIn();
+        if (event.nativeEvent.button === 0) onResize(event.nativeEvent);
+      }}
+      style={{
+        flexShrink: 0,
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 2,
+        ...(sideways
+          ? { width: 7, marginHorizontal: -3, cursor: cursor("col-resize") }
+          : { height: 7, marginVertical: -3, cursor: cursor("row-resize") }),
+      }}
+    >
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          backgroundColor: theme.colors.border,
+          ...(sideways
+            ? { top: 0, bottom: 0, left: 3, width: 1 }
+            : { left: 0, right: 0, top: 3, height: 1 }),
+        }}
+      />
+      <View
+        ref={gripHover.ref}
+        testID="editor-plus-grip"
+        accessibilityLabel="Move the preview"
+        onPointerEnter={gripHover.onHoverIn}
+        onPointerLeave={gripHover.onHoverOut}
+        onPointerDown={(event) => {
+          event.stopPropagation();
+          gripHover.onPressIn();
+          if (event.nativeEvent.button === 0) onDock(event.nativeEvent);
+        }}
+        style={{
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 4,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface2,
+          cursor: cursor("grab"),
+          ...(sideways ? { width: 14, height: 36 } : { width: 36, height: 14 }),
+        }}
+      >
+        <Icon
+          name={sideways ? "GripVertical" : "GripHorizontal"}
+          size={12}
+          color={theme.colors.foregroundMuted}
+        />
+      </View>
+    </View>
+  );
+}
+
 function TextButton({
   theme,
   label,
@@ -992,10 +1133,7 @@ function panelStyles(theme: PluginTheme) {
     status: { flex: 1, fontSize: 12, color: theme.colors.foregroundMuted },
     group: { flexDirection: "row" as const, alignItems: "center" as const, gap: 2 },
     body: { flex: 1, minHeight: 0 },
-    row: { flexDirection: "row" as const },
-    column: { flexDirection: "column" as const },
     pane: { flex: 1, minWidth: 0, minHeight: 0 },
-    previewBeside: { borderLeftWidth: 1, borderLeftColor: theme.colors.border },
     // The editor stays mounted while hidden: its language server session and text live on.
     hidden: { display: "none" as const },
     segment: {
@@ -1006,7 +1144,6 @@ function panelStyles(theme: PluginTheme) {
       borderLeftWidth: 1,
       borderLeftColor: theme.colors.border,
     },
-    previewBelow: { borderTopWidth: 1, borderTopColor: theme.colors.border },
     fill: { flex: 1, minHeight: 0 },
     overlay: {
       position: "absolute" as const,

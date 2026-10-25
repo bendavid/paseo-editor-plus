@@ -3,6 +3,7 @@ import { mountDocumentPreview } from "./document-preview";
 import { createEditor, createLanguageClient } from "./editor";
 import { mountPdfPreview } from "./pdf/viewer";
 import { mountPreview } from "./preview";
+import { dockSplit, resizeSplit } from "./split";
 
 /** Everything the panel needs from the DOM, loaded only on web. */
 function decodeBase64(base64: string): Uint8Array {
@@ -19,4 +20,6 @@ export const webModules: WebModules = {
   mountPreview,
   mountDocumentPreview,
   mountPdfPreview,
+  resizeSplit,
+  dockSplit,
 };

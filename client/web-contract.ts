@@ -156,7 +156,35 @@ export interface PdfPreviewOptions {
   onPoint(page: number, x: number, y: number): void;
 }
 
+/** Where the preview sits relative to the editor. */
+export type DockSide = "left" | "right" | "top" | "bottom";
+
+export interface SplitDragOptions {
+  /** The element holding the editor, divider, and preview. */
+  container: unknown;
+  /** The pointerdown that starts the drag (a DOM PointerEvent). */
+  event: unknown;
+  side: DockSide;
+  /** The preview's share of the split. */
+  ratio: number;
+}
+
+export interface SplitResizeOptions extends SplitDragOptions {
+  /** While dragging. */
+  onRatio(ratio: number): void;
+  /** Once released: the new share, the old one when cancelled, or 0.5 on a double press. */
+  onEnd(ratio: number): void;
+}
+
+export interface SplitDockOptions extends SplitDragOptions {
+  accent: string;
+  /** Released over a side; not called when cancelled with Escape. */
+  onDock(side: DockSide): void;
+}
+
 export interface WebModules {
+  resizeSplit(options: SplitResizeOptions): void;
+  dockSplit(options: SplitDockOptions): void;
   decodeBase64(base64: string): Uint8Array;
   mountDocumentPreview(parent: unknown, options: DocumentPreviewOptions): DocumentPreviewView;
   mountPdfPreview(parent: unknown, options: PdfPreviewOptions): PdfPreviewView;
