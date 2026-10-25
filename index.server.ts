@@ -4,7 +4,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { findServer, ServerNotFoundError } from "./server/discovery";
-import { Installer, planInstall } from "./server/installer";
+import { Components } from "./server/components";
+import { dataRoot, Installer, planInstall } from "./server/installer";
 import {
   latexRoot,
   pdfFor,
@@ -12,15 +13,16 @@ import {
   synctexInverse as inverse,
 } from "./server/latex";
 import { renderMarkdown as render } from "./server/markdown";
-import { binaryDataBase64, type PdfjsAssets, runtimePartSource } from "./server/pdfjs-assets";
-import {
-  binary as pdfjsBinaryData,
-  pdfjsVersion,
-  runtime as pdfjsRuntime,
-} from "./server/generated/pdfjs-assets.js";
+import { PdfjsAssets } from "./server/pdfjs-assets";
 import { EditorSession } from "./server/session";
+import { personalWordsFile, Spelling } from "./server/spelling";
 import { type LanguageProfile, languageById } from "./shared/languages";
 import {
+  addSpellingWord,
+  checkSpelling,
+  componentStatusRpc,
+  removeComponent,
+  suggestSpelling,
   closeSession,
   connectPreview,
   openSession,
@@ -48,12 +50,6 @@ const MAX_SESSIONS = 24;
 /** Bytes of PDF per call: base64 makes it a third bigger, still far under the relay's limit. */
 const PDF_CHUNK = 3 * 1024 * 1024;
 
-const pdfjs: PdfjsAssets = {
-  version: pdfjsVersion,
-  runtime: pdfjsRuntime,
-  binary: pdfjsBinaryData,
-};
-
 async function isDirectory(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isDirectory();
@@ -73,6 +69,12 @@ export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(serverSettings);
   const sessions = new Map<string, EditorSession>();
   const installer = new Installer();
+  const components = new Components(() => tool("npm"));
+  const pdfjs = new PdfjsAssets(() => components.readyFolder("pdfjs"));
+  const spelling = new Spelling(
+    () => components.readyFolder("spelling"),
+    personalWordsFile(dataRoot()),
+  );
 
   async function locate(language: LanguageProfile) {
     const state = await settings.read();
@@ -273,8 +275,47 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
-  server.handle(pdfjsPart, ({ part }) => runtimePartSource(pdfjs, part));
-  server.handle(pdfjsBinary, ({ kind, filename }) => binaryDataBase64(pdfjs, kind, filename));
+  server.handle(pdfjsPart, ({ part }) => pdfjs.part(part));
+  server.handle(pdfjsBinary, ({ kind, filename }) => pdfjs.binary(kind, filename));
+
+  // --- Components downloaded on first use, and spelling.
+
+  server.handle(componentStatusRpc, ({ id, install, retry }) =>
+    install ? components.ensure(id, retry ?? false) : components.status(id),
+  );
+
+  server.handle(removeComponent, async ({ id }) => {
+    await components.remove(id);
+    return {};
+  });
+
+  server.handle(checkSpelling, async ({ file, words }) => {
+    const status = await components.ensure("spelling");
+    if (status.state !== "ready") return { state: status.state, error: status.error, issues: [] };
+    try {
+      return { state: status.state, error: null, issues: await spelling.check(file, words) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { state: "failed" as const, error: message, issues: [] };
+    }
+  });
+
+  server.handle(suggestSpelling, async ({ file, word }) => {
+    try {
+      return { suggestions: await spelling.suggest(file, word), error: null };
+    } catch (error) {
+      return { suggestions: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  server.handle(addSpellingWord, async ({ word }) => {
+    try {
+      await spelling.addWord(word);
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 
   server.handle(installServer, async ({ language: languageId }) => {
     const language = languageById(languageId);

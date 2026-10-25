@@ -1,9 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { DocumentInitParameters } from "pdfjs-dist/types/src/display/api";
-import type { EventBus, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { SCOPE_CLASS } from "../../css-scope";
 import type { PdfPreviewOptions, PdfPreviewView, SyncBox } from "../../web-contract";
+import type { PdfDocument, PdfEventBus, PdfViewer } from "./pdfjs-types";
 import { binaryDataFactoryFor, loadPdfjsRuntime, type PdfjsRuntime } from "./runtime";
 
 // The LaTeX preview: the built PDF in PDF.js, reloaded in place after each build, linked to the
@@ -11,16 +9,16 @@ import { binaryDataFactoryFor, loadPdfjsRuntime, type PdfjsRuntime } from "./run
 
 interface Layer {
   container: HTMLDivElement;
-  eventBus: EventBus;
-  viewer: PDFViewer;
-  document: PDFDocumentProxy;
+  eventBus: PdfEventBus;
+  viewer: PdfViewer;
+  document: PdfDocument;
   location: { pageNumber: number; left: number; top: number; scale: string } | null;
 }
 
 /** How long a new build may take to draw before it replaces the old one anyway. */
 const SWAP_TIMEOUT_MS = 2000;
 
-function once(eventBus: EventBus, name: string): Promise<void> {
+function once(eventBus: PdfEventBus, name: string): Promise<void> {
   return new Promise((resolve) => {
     const listener = () => {
       eventBus.off(name, listener);
@@ -63,9 +61,7 @@ export function mountPdfPreview(
   };
 
   function pageHeight(layer: Layer, page: number): number {
-    const view = (
-      layer.viewer.getPageView(page - 1) as { pdfPage?: { view: number[] } } | undefined
-    )?.pdfPage?.view;
+    const view = layer.viewer.getPageView(page - 1)?.pdfPage?.view;
     return view ? view[3] - view[1] : 792;
   }
 
@@ -74,9 +70,8 @@ export function mountPdfPreview(
     const pageElement = (event.target as Element | null)?.closest?.(".page") as HTMLElement | null;
     const page = Number(pageElement?.dataset.pageNumber);
     if (!pageElement || !page) return;
-    const pageView = layer.viewer.getPageView(page - 1) as {
-      viewport: { convertToPdfPoint(x: number, y: number): number[] };
-    };
+    const pageView = layer.viewer.getPageView(page - 1);
+    if (!pageView) return;
     const box = pageElement.getBoundingClientRect();
     const [x, y] = pageView.viewport.convertToPdfPoint(
       event.clientX - box.left - pageElement.clientLeft,
@@ -86,7 +81,7 @@ export function mountPdfPreview(
     options.onPoint(page, x, pageHeight(layer, page) - y);
   };
 
-  function createLayer(rt: PdfjsRuntime, pdfDocument: PDFDocumentProxy): Layer {
+  function createLayer(rt: PdfjsRuntime, pdfDocument: PdfDocument): Layer {
     const container = document.createElement("div");
     container.className = "editor-plus-pdf-container";
     container.tabIndex = 0;
@@ -129,7 +124,7 @@ export function mountPdfPreview(
   }
 
   function destroyLayer(layer: Layer): void {
-    layer.viewer.setDocument(null as unknown as PDFDocumentProxy);
+    layer.viewer.setDocument(null);
     void layer.document.loadingTask.destroy();
     layer.container.remove();
   }
@@ -153,7 +148,7 @@ export function mountPdfPreview(
         cMapPacked: true,
         isEvalSupported: false,
         enableXfa: false,
-      } as DocumentInitParameters).promise;
+      }).promise;
       if (destroyed || mine !== sequence) {
         void pdfDocument.loadingTask.destroy();
         return;
@@ -202,10 +197,8 @@ export function mountPdfPreview(
         allowNegativeOffset: true,
       });
       for (const box of boxes.filter((b) => b.page === first.page)) {
-        const pageView = layer.viewer.getPageView(box.page - 1) as {
-          div: HTMLDivElement;
-          viewport: { convertToViewportPoint(x: number, y: number): number[] };
-        };
+        const pageView = layer.viewer.getPageView(box.page - 1);
+        if (!pageView) continue;
         // PDF space has its origin at the bottom-left; SyncTeX boxes are from the top-left.
         const [x1, y1] = pageView.viewport.convertToViewportPoint(
           box.x,

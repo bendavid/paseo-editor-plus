@@ -22,7 +22,10 @@ import {
 import { Pressable, Text, View } from "react-native";
 import { z } from "zod";
 import {
+  addSpellingWord,
+  checkSpelling,
   closeSession,
+  componentStatusRpc,
   connectPreview,
   locatePdf,
   openSession,
@@ -36,6 +39,7 @@ import {
   sendPreview,
   serverSettings,
   statPdf,
+  suggestSpelling,
   synctexForward,
   synctexInverse,
 } from "../shared/rpc";
@@ -46,7 +50,13 @@ import { previewProvider } from "./previews";
 import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 import type { Preview, PreviewCalls, SourceLocation } from "./previews/types";
 import { TooltipProvider, useTooltip } from "./tooltip";
-import type { CharPosition, CodeEditor, LanguageClient, WebModules } from "./web-contract";
+import type {
+  CharPosition,
+  CodeEditor,
+  LanguageClient,
+  SpellingService,
+  WebModules,
+} from "./web-contract";
 
 const SAVE_DELAY_MS = 500;
 /** Cursor moves sent to the preview at most this often. */
@@ -144,9 +154,18 @@ export function EditorPanel(props: EditorPanelProps) {
     synctexInverse: useRpc(synctexInverse),
     pdfjsPart: useRpc(pdfjsPart),
     pdfjsBinary: useRpc(pdfjsBinary),
+    componentStatus: useRpc(componentStatusRpc),
   };
   const previewCallsRef = useRef(previewCalls);
   previewCallsRef.current = previewCalls;
+  const spellingCalls = {
+    check: useRpc(checkSpelling),
+    suggest: useRpc(suggestSpelling),
+    add: useRpc(addSpellingWord),
+  };
+  const spellingCallsRef = useRef(spellingCalls);
+  spellingCallsRef.current = spellingCalls;
+  const [spellingMessage, setSpellingMessage] = useState<string | null>(null);
 
   const panel = useRef<View>(null);
   const editorHost = useRef<View>(null);
@@ -327,6 +346,12 @@ export function EditorPanel(props: EditorPanelProps) {
       text: text.current,
       theme: themeRef.current,
       spellcheck: spellcheckRef.current,
+      spelling: {
+        check: (words) => spellingCallsRef.current.check({ file: file.path, words }),
+        suggest: (word) => spellingCallsRef.current.suggest({ file: file.path, word }),
+        add: (word) => spellingCallsRef.current.add({ word }),
+        onStatus: setSpellingMessage,
+      } satisfies SpellingService,
       onChange: (next) => {
         text.current = next;
         unsaved.current = next;
@@ -366,6 +391,7 @@ export function EditorPanel(props: EditorPanelProps) {
 
   useEffect(() => {
     if (editorReady) editor.current?.setSpellcheck(spellcheck);
+    if (!spellcheck) setSpellingMessage(null);
   }, [editorReady, spellcheck]);
 
   // Open at the line Paseo asked for, such as from an agent's file reference.
@@ -566,6 +592,7 @@ export function EditorPanel(props: EditorPanelProps) {
   else if (server.status === "ready")
     status = server.version ? `${serverName} ${server.version}` : serverName;
   else status = server.status === "missing" ? `${serverName} not found` : `${serverName} stopped`;
+  if (spellcheck && spellingMessage) status = `${status} · ${spellingMessage}`;
 
   return (
     <View ref={panel} style={styles.panel}>

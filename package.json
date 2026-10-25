@@ -13,8 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.server.json",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "prepare": "node scripts/embed-pdfjs.mjs"
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.4",
@@ -40,8 +39,7 @@
     "@lezer/highlight": "1.2.5",
     "@marp-team/marp-core": "4.4.0",
     "codemirror-lang-typst": "0.6.0",
-    "markdown-it": "15.0.3",
-    "pdfjs-dist": "6.4.299"
+    "markdown-it": "15.0.3"
   },
   "devDependencies": {
     "@getpaseo/plugin": "^0.13.0",
@@ -49,7 +47,9 @@
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^22.20.5",
     "@types/react": "~19.2.0",
+    "cspell-lib": "10.4.0",
     "esbuild": "^0.27.7",
+    "pdfjs-dist": "6.4.299",
     "prettier": "^3.9.10",
     "react": "^19.1.0",
     "react-native": "^0.81.5",

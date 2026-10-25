@@ -2,7 +2,7 @@ import { type LanguageSupport, syntaxTree } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 import { editorLanguage } from "../client/web/languages";
-import { uncheckedRanges } from "../client/web/spelling";
+import { proseWords, uncheckedRanges } from "../client/web/spelling";
 
 /** The words the spellchecker reads and skips in `source`, parsed as `language`. */
 function split(language: string, extension: string, source: string) {
@@ -134,5 +134,16 @@ describe("spelling", () => {
       ["# A coment about it", "def fnzz(argzz):", '    return "strzz"  # anothr'].join("\n"),
     );
     expect(checked).toEqual(["A", "coment", "about", "it", "anothr"]);
+  });
+});
+
+describe("prose words", () => {
+  it("are the words outside code, without surrounding quotes", () => {
+    const source = "Some 'quoted' txt, don't `codezz` x2 42 [lnk](https://exmpl.com/pathzz)\n";
+    const editor = editorLanguage("markdown");
+    const state = EditorState.create({ doc: source, extensions: [editor.support("md")] });
+    const words = proseWords(syntaxTree(state), state.doc, editor.spelling, 0, source.length);
+    expect(words.map((word) => word.text)).toEqual(["Some", "quoted", "txt", "don't", "x2", "lnk"]);
+    for (const word of words) expect(source.slice(word.from, word.to)).toBe(word.text);
   });
 });

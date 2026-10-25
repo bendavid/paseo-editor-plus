@@ -72,3 +72,32 @@ describe("client bundle", () => {
     expect(registered).toContain("panel:typst:typ");
   });
 });
+
+// Mirrors the server options in Paseo's plugin compiler.
+async function compileServer(): Promise<string> {
+  const result = await build({
+    entryPoints: ["index.server.ts"],
+    bundle: true,
+    format: "cjs",
+    platform: "node",
+    target: "node20",
+    external: ["@getpaseo/plugin", "@getpaseo/plugin/*", "zod"],
+    logLevel: "silent",
+    write: false,
+  });
+  return result.outputFiles[0].text;
+}
+
+describe("server bundle", () => {
+  it("carries neither PDF.js nor cspell, which are downloaded on first use", async () => {
+    const bundle = await compileServer();
+    // Most of what remains is Marp's renderer: MathJax, highlight.js, and KaTeX (about 6 MB).
+    expect(bundle.length).toBeLessThan(7_000_000);
+    expect(bundle).not.toContain("GlobalWorkerOptions");
+    expect(bundle).not.toContain("SpellingDictionaryLoadError");
+  });
+
+  it("keeps the import() that loads cspell from plugin-data", async () => {
+    expect(await compileServer()).toMatch(/\bimport\(\s*\(0, import_node_url\.pathToFileURL\)/);
+  });
+});

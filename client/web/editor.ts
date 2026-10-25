@@ -52,7 +52,7 @@ import type {
   LanguageClientOptions,
 } from "../web-contract";
 import { editorLanguage } from "./languages";
-import { spellcheck } from "./spelling";
+import { spellchecker } from "./spellchecker";
 import {
   refreshSemanticTokens,
   SEMANTIC_TOKENS_CAPABILITY,
@@ -208,7 +208,8 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
   const lspSlot = new Compartment();
   const themeSlot = new Compartment();
   const spellSlot = new Compartment();
-  const spelling = (enabled: boolean) => (enabled ? spellcheck(language.spelling) : []);
+  const spelling = (enabled: boolean) =>
+    enabled ? spellchecker(language.spelling, options.spelling) : [];
   let applyingHostText = false;
 
   const charPosition = (state: EditorState, pos: number): CharPosition => {

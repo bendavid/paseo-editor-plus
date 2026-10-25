@@ -1,5 +1,6 @@
 import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type {
+  componentStatusRpc,
   connectPreview,
   locatePdf,
   pdfjsBinary,
@@ -31,6 +32,9 @@ export interface PreviewCalls {
   synctexInverse(input: RpcInput<typeof synctexInverse>): Promise<RpcOutput<typeof synctexInverse>>;
   pdfjsPart(input: RpcInput<typeof pdfjsPart>): Promise<RpcOutput<typeof pdfjsPart>>;
   pdfjsBinary(input: RpcInput<typeof pdfjsBinary>): Promise<RpcOutput<typeof pdfjsBinary>>;
+  componentStatus(
+    input: RpcInput<typeof componentStatusRpc>,
+  ): Promise<RpcOutput<typeof componentStatusRpc>>;
 }
 
 /** What the panel gives a preview. */

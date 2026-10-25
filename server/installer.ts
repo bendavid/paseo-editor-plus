@@ -165,6 +165,28 @@ function run(
   });
 }
 
+/**
+ * Installs exactly the locked packages into `folder` with `npm ci`, running no install scripts.
+ * `omitOptional` leaves out optional packages, such as native builds a package can do without.
+ */
+export async function npmCi(
+  folder: string,
+  files: { manifest: string; lock: string },
+  npm: string,
+  options: { omitOptional: boolean },
+): Promise<void> {
+  await writeFile(join(folder, "package.json"), files.manifest);
+  await writeFile(join(folder, "package-lock.json"), files.lock);
+  // npm is a Node.js script; make sure the node next to it is found.
+  const path = `${dirname(npm)}${delimiter}${process.env.PATH ?? ""}`;
+  const omit = options.omitOptional ? ["--omit=optional"] : [];
+  await run(npm, ["ci", "--omit=dev", ...omit, "--ignore-scripts", "--no-audit", "--no-fund"], {
+    cwd: folder,
+    env: { ...process.env, PATH: path },
+    timeout: 600_000,
+  });
+}
+
 /** Finds a file named `name` (or `name.exe`) under `root`, a few levels deep. */
 export async function findFile(root: string, name: string, depth = 4): Promise<string | null> {
   let entries;
@@ -393,15 +415,7 @@ export class Installer {
     const files = NPM_PACKAGES[job.packageId];
     if (!files) throw new Error(`No pinned npm packages for ${job.packageId}.`);
     job.phase = "installing";
-    await writeFile(join(staging, "package.json"), files.manifest);
-    await writeFile(join(staging, "package-lock.json"), files.lock);
-    // npm is a Node.js script; make sure the node next to it is found.
-    const path = `${dirname(npm)}${delimiter}${process.env.PATH ?? ""}`;
-    await run(npm, ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
-      cwd: staging,
-      env: { ...process.env, PATH: path },
-      timeout: 600_000,
-    });
+    await npmCi(staging, files, npm, { omitOptional: false });
   }
 
   private async installGo(

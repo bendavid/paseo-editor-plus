@@ -1,3 +1,4 @@
+import { componentMessage } from "../../shared/components";
 import type { PreviewProvider } from "./types";
 
 // LaTeX: the PDF the build writes (latexmk through texlab, with SyncTeX), reloaded when it
@@ -36,6 +37,22 @@ export const latexPdfPreview: PreviewProvider = {
     let destroyed = false;
     let waitingMessage = true;
 
+    // PDF.js is downloaded into plugin-data the first time a preview needs it.
+    let runtimeReady = false;
+    let retry = true;
+    const ensureRuntime = async (): Promise<boolean> => {
+      if (runtimeReady) return true;
+      const status = await calls.componentStatus({ id: "pdfjs", install: true, retry });
+      retry = false;
+      const message = componentMessage(status);
+      if (message) {
+        view.message(message);
+        return false;
+      }
+      runtimeReady = true;
+      return true;
+    };
+
     const read = async (): Promise<{ bytes: Uint8Array; mtimeMs: number }> => {
       const parts: Uint8Array[] = [];
       let offset = 0;
@@ -73,6 +90,7 @@ export const latexPdfPreview: PreviewProvider = {
           return;
         }
         if (info.mtimeMs === shown) return;
+        if (!(await ensureRuntime())) return;
         const { bytes, mtimeMs } = await read();
         if (destroyed) return;
         await view.open(bytes);
@@ -85,6 +103,7 @@ export const latexPdfPreview: PreviewProvider = {
         checking = false;
       }
     };
+    await ensureRuntime().catch(() => false);
     await check();
     const timer = setInterval(() => void check(), CHECK_MS);
 

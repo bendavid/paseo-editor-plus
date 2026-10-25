@@ -1,16 +1,15 @@
-import type * as PdfjsLib from "pdfjs-dist";
-import type * as PdfjsViewer from "pdfjs-dist/web/pdf_viewer.mjs";
 import { type BinaryKind, RUNTIME_PARTS, type RuntimePart } from "../../../shared/rpc";
 import { SCOPE_CLASS, scopeCss } from "../../css-scope";
 import { setRuntimeRelease } from "../../runtime-release";
 import type { FetchBinaryData, FetchRuntimePart } from "../../web-contract";
+import type { PdfjsLibModule, PdfjsViewerModule } from "./pdfjs-types";
 
 // PDF.js for the LaTeX preview, loaded the way the pdfjs-viewer plugin loads it.
 
 export interface PdfjsRuntime {
   version: string;
-  lib: typeof PdfjsLib;
-  viewer: typeof PdfjsViewer;
+  lib: PdfjsLibModule;
+  viewer: PdfjsViewerModule;
 }
 
 let loading: Promise<PdfjsRuntime> | null = null;
@@ -44,9 +43,9 @@ async function load(fetchPart: FetchRuntimePart): Promise<PdfjsRuntime> {
     urls.push(url);
     return url;
   };
-  const lib = (await importModule(moduleUrl(source.pdf))) as typeof PdfjsLib;
+  const lib = (await importModule(moduleUrl(source.pdf))) as PdfjsLibModule;
   // pdf_viewer.mjs reads the library from globalThis.pdfjsLib, which evaluating pdf.mjs just set.
-  const viewer = (await importModule(moduleUrl(source.viewer))) as typeof PdfjsViewer;
+  const viewer = (await importModule(moduleUrl(source.viewer))) as PdfjsViewerModule;
   const worker = new Worker(moduleUrl(source.worker), {
     type: "module",
     name: "editor-plus-pdfjs",
@@ -86,7 +85,8 @@ const OWN_CSS = `
 
 /**
  * PDF.js asks its BinaryDataFactory for CMaps, standard fonts, and image decoders by file name
- * (with `useWorkerFetch: false`). This one asks the plugin's server code, which embeds them.
+ * (with `useWorkerFetch: false`). This one asks the plugin's server code, which reads them from
+ * the PDF.js it downloaded.
  * `getDocument` instantiates the class with its URL options, which this factory does not need.
  */
 export function binaryDataFactoryFor(fetchBinaryData: FetchBinaryData) {

@@ -1,0 +1,8 @@
+{
+  "name": "editor-plus-pdfjs",
+  "private": true,
+  "description": "PDF.js for Editor Plus's LaTeX preview, installed into plugin-data on first use.",
+  "dependencies": {
+    "pdfjs-dist": "6.4.299"
+  }
+}

@@ -1,19 +1,11 @@
-import { syntaxTree } from "@codemirror/language";
-import { type Extension, RangeSetBuilder, type Text } from "@codemirror/state";
-import {
-  Decoration,
-  type DecorationSet,
-  EditorView,
-  ViewPlugin,
-  type ViewUpdate,
-} from "@codemirror/view";
+import type { syntaxTree } from "@codemirror/language";
+import type { Text } from "@codemirror/state";
 import { type Highlighter, highlightTree, tagHighlighter, tags } from "@lezer/highlight";
 
-// Spellchecking through the browser's own checker (Chromium's in the desktop app). CodeMirror turns
-// it off; this turns it on for the editor and marks every range that isn't prose
-// `spellcheck="false"`, using the language's parse tree. Chromium honours the attribute on spans
-// inside a checked line, but not the reverse (checked spans inside an unchecked editor), so the
-// marks exclude code rather than include text.
+// Which parts of a file are prose, from the language's parse tree, and the words in them. The
+// spellchecker (spellchecker.ts) sends those words to cspell on the daemon host. The browser's own
+// spellchecker is not used: it drops its marks whenever the editor redraws a span (language-server
+// highlighting and diagnostics do so constantly) and checks again only where the user types.
 
 type Tree = ReturnType<typeof syntaxTree>;
 
@@ -172,8 +164,8 @@ function commandArguments(
 const LETTER = /\p{L}/u;
 
 /**
- * The ranges of `[from, to]` the spellchecker should skip, in order. Ranges without letters are left out:
- * they hold no words, and every excluded range splits the line into another span.
+ * The ranges of `[from, to]` the spellchecker should skip, in order. Ranges without letters are left
+ * out: they hold no words.
  */
 export function uncheckedRanges(
   tree: Tree,
@@ -216,45 +208,44 @@ export function uncheckedRanges(
     .sort((a, b) => a.from - b.from);
 }
 
-const unchecked = Decoration.mark({ attributes: { spellcheck: "false" } });
-
-function decorations(view: EditorView, rules: SpellingRules): DecorationSet {
-  const builder = new RangeSetBuilder<Decoration>();
-  const tree = syntaxTree(view.state);
-  for (const visible of view.visibleRanges) {
-    const ranges = uncheckedRanges(tree, view.state.doc, rules, visible.from, visible.to);
-    // The ranges can overlap (arguments inside highlighted code); the builder needs them apart.
-    let last = visible.from;
-    for (const range of ranges) {
-      const start = Math.max(range.from, last);
-      if (range.to > start) builder.add(start, range.to, unchecked);
-      last = Math.max(last, range.to);
-    }
-  }
-  return builder.finish();
+/** A word of prose: where it is, and its text. */
+export interface Word {
+  from: number;
+  to: number;
+  text: string;
 }
 
-/** The browser's spellchecker over the prose of a file. */
-export function spellcheck(rules: SpellingRules): Extension {
-  return [
-    EditorView.contentAttributes.of({ spellcheck: "true" }),
-    ViewPlugin.fromClass(
-      class {
-        decorations: DecorationSet;
-        constructor(view: EditorView) {
-          this.decorations = decorations(view, rules);
-        }
-        update(update: ViewUpdate) {
-          if (
-            update.docChanged ||
-            update.viewportChanged ||
-            syntaxTree(update.startState) !== syntaxTree(update.state)
-          ) {
-            this.decorations = decorations(update.view, rules);
-          }
-        }
-      },
-      { decorations: (plugin) => plugin.decorations },
-    ),
-  ];
+/** Letters, marks, digits, apostrophes, and underscores; cspell splits compounds itself. */
+const WORD = /[\p{L}\p{M}\p{N}_'’]+/gu;
+const MAX_WORD = 100;
+
+/** The words of prose in `[from, to]`, in order. */
+export function proseWords(
+  tree: Tree,
+  doc: Text,
+  rules: SpellingRules,
+  from: number,
+  to: number,
+): Word[] {
+  const words: Word[] = [];
+  let pos = from;
+  const take = (start: number, end: number) => {
+    if (end <= start) return;
+    const text = doc.sliceString(start, end);
+    for (const match of text.matchAll(WORD)) {
+      // Apostrophes around a word are quotes.
+      const raw = match[0];
+      const lead = raw.length - raw.replace(/^['’]+/, "").length;
+      const word = raw.slice(lead).replace(/['’]+$/, "");
+      if (!word || word.length > MAX_WORD || !LETTER.test(word)) continue;
+      const at = start + (match.index ?? 0) + lead;
+      words.push({ from: at, to: at + word.length, text: word });
+    }
+  };
+  for (const skipped of uncheckedRanges(tree, doc, rules, from, to)) {
+    take(pos, Math.max(pos, skipped.from));
+    pos = Math.max(pos, skipped.to);
+  }
+  take(pos, to);
+  return words;
 }

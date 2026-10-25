@@ -1,4 +1,10 @@
-import { type PluginSurfaceProps, type SettingsState, useSettings } from "@getpaseo/plugin/client";
+import type { RpcOutput } from "@getpaseo/plugin";
+import {
+  type PluginSurfaceProps,
+  type SettingsState,
+  useRpc,
+  useSettings,
+} from "@getpaseo/plugin/client";
 import {
   SettingsAction,
   SettingsCard,
@@ -7,10 +13,11 @@ import {
   SettingsSection,
   SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Text } from "react-native";
 import { LANGUAGES, type LanguageProfile } from "../shared/languages";
-import { serverSettings } from "../shared/rpc";
+import { COMPONENTS, type ComponentId } from "../shared/components";
+import { componentStatusRpc, removeComponent, serverSettings } from "../shared/rpc";
 import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 
 type ReadySettings = Extract<SettingsState<typeof serverSettings.schema>, { status: "ready" }>;
@@ -44,6 +51,12 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
       {LANGUAGES.map((language) => (
         <ServerSection key={language.id} language={language} settings={settings} theme={theme} />
       ))}
+      <SettingsSection title="Downloads">
+        <SettingsCard>
+          <ComponentRow id="spelling" />
+          <ComponentRow id="pdfjs" />
+        </SettingsCard>
+      </SettingsSection>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: 8 }}>
         Each open editor tab runs its own language server on the daemon host while it is open.
       </Text>
@@ -176,5 +189,56 @@ function ServerSection({
         }}
       />
     </SettingsSection>
+  );
+}
+
+type ComponentStatus = RpcOutput<typeof componentStatusRpc>;
+
+/** A component Editor Plus downloads on first use: where it is, and a way to remove it. */
+function ComponentRow({ id }: { id: ComponentId }) {
+  const fetchStatus = useRpc(componentStatusRpc);
+  const remove = useRpc(removeComponent);
+  const [status, setStatus] = useState<ComponentStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const refresh = useCallback(async () => {
+    try {
+      setStatus(await fetchStatus({ id, install: false }));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [fetchStatus, id]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  const info = COMPONENTS[id];
+  const label = `${info.name} ${info.version}`;
+  if (status?.state === "ready") {
+    return (
+      <SettingsAction
+        label={label}
+        hint={`${info.purpose} Downloaded to ${status.folder}. ${info.license}.`}
+        actionLabel={busy ? "Removing…" : "Remove"}
+        disabled={busy}
+        onPress={() => {
+          setBusy(true);
+          void remove({ id })
+            .then(refresh)
+            .finally(() => setBusy(false));
+        }}
+      />
+    );
+  }
+  return (
+    <SettingsRow
+      label={label}
+      hint={
+        status?.state === "installing"
+          ? "Downloading…"
+          : `${info.purpose} Downloaded from npm the first time it is needed. ${info.license}.`
+      }
+      error={error ?? (status?.state === "failed" ? status.error : null)}
+    />
   );
 }

@@ -246,3 +246,59 @@ export const pdfjsBinary = defineRpc({
   input: z.object({ kind: z.enum(BINARY_KINDS), filename: z.string().min(1).max(200) }),
   output: z.object({ base64: z.string().nullable() }),
 });
+
+// --- Components downloaded on first use (shared/components.ts).
+
+const componentId = z.enum(["pdfjs", "spelling"]);
+const componentStatus = z.object({
+  id: componentId,
+  state: z.enum(["ready", "missing", "installing", "failed"]),
+  version: z.string(),
+  folder: z.string().nullable(),
+  error: z.string().nullable(),
+});
+
+/** A component's status; with `install`, starts downloading it if it is missing. */
+export const componentStatusRpc = defineRpc({
+  name: "editorplus.component.status",
+  input: z.object({ id: componentId, install: z.boolean(), retry: z.boolean().optional() }),
+  output: componentStatus,
+});
+
+export const removeComponent = defineRpc({
+  name: "editorplus.component.remove",
+  input: z.object({ id: componentId }),
+  output: z.object({}),
+});
+
+// --- Spelling.
+
+const filePath = z.string().min(1).max(4096);
+/** A word as the editor splits prose: letters, digits, apostrophes, and underscores. */
+const word = z.string().min(1).max(100);
+
+/** The misspelled parts of words from `file`; `state` is the spelling component's. */
+export const checkSpelling = defineRpc({
+  name: "editorplus.spell.check",
+  input: z.object({ file: filePath, words: z.array(word).max(2000) }),
+  output: z.object({
+    state: componentStatus.shape.state,
+    error: z.string().nullable(),
+    issues: z.array(
+      z.object({ index: z.number().int(), offset: z.number().int(), length: z.number().int() }),
+    ),
+  }),
+});
+
+export const suggestSpelling = defineRpc({
+  name: "editorplus.spell.suggest",
+  input: z.object({ file: filePath, word }),
+  output: z.object({ suggestions: z.array(z.string()), error: z.string().nullable() }),
+});
+
+/** Adds a word to the personal dictionary in plugin-data. */
+export const addSpellingWord = defineRpc({
+  name: "editorplus.spell.add",
+  input: z.object({ word }),
+  output: z.object({ error: z.string().nullable() }),
+});

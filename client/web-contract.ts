@@ -21,7 +21,7 @@ export interface CodeEditor {
   refreshSemanticTokens(): void;
   format(): void;
   setTheme(theme: PluginTheme): void;
-  /** Turns the browser's spellchecker on or off for the file's prose. */
+  /** Turns spellchecking of the file's prose on or off. */
   setSpellcheck(enabled: boolean): void;
   focus(): void;
   destroy(): void;
@@ -34,6 +34,19 @@ export interface LanguageClientFile {
   plainTokenTypes: readonly string[];
 }
 
+/** The spellchecker's calls to cspell on the daemon host, for one file. */
+export interface SpellingService {
+  check(words: string[]): Promise<{
+    state: "ready" | "missing" | "installing" | "failed";
+    error: string | null;
+    issues: { index: number; offset: number; length: number }[];
+  }>;
+  suggest(word: string): Promise<{ suggestions: string[]; error: string | null }>;
+  add(word: string): Promise<{ error: string | null }>;
+  /** What the spellchecker is waiting for (a download, an error), or null once it works. */
+  onStatus(message: string | null): void;
+}
+
 export interface CodeEditorOptions {
   /** On web, a React Native `View` ref is its DOM element. */
   parent: unknown;
@@ -44,6 +57,7 @@ export interface CodeEditorOptions {
   text: string;
   theme: PluginTheme;
   spellcheck: boolean;
+  spelling: SpellingService;
   onChange(text: string): void;
   /** `pointer` is true when a click or drag moved the cursor. */
   onCursor(position: CharPosition, pointer: boolean): void;

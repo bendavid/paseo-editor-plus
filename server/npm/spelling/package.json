@@ -1,0 +1,8 @@
+{
+  "name": "editor-plus-spelling",
+  "private": true,
+  "description": "cspell and its dictionaries for Editor Plus's spellchecker, installed into plugin-data on first use.",
+  "dependencies": {
+    "cspell-lib": "10.4.0"
+  }
+}
