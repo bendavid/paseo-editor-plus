@@ -7,7 +7,7 @@ What you can do in the editor:
 - Format the document (the toolbar button or Shift+Alt+F), rename a symbol (F2), go to a definition in the same file (F12), find references (Shift+F12), and fold sections.
 - Read code coloured as you type by the editor's own parser, refined by the language server once it has analysed the file.
 - Keep editing when an agent changes the file: with nothing unsaved the editor loads the new version; with unsaved edits it asks whether to reload or overwrite.
-- For Typst, see the rendered document beside the editor, updated as you type. Click in the preview to put the cursor on the source that produced it; click in the source to scroll the preview there. You can hide the preview, invert its colors, and scroll it to the cursor.
+- For Typst, see the rendered document beside the editor, updated as you type. Click in the preview to put the cursor on the source that produced it; click in the source to scroll the preview there. Show the editor, the preview, or both side by side; with the preview alone, a click in it brings the editor back at that spot. You can also invert the preview's colors and scroll it to the cursor.
 
 Language servers: each language uses a server on the computer that runs the Paseo daemon: tinymist (Typst), basedpyright (Python), rust-analyzer (Rust), gopls (Go), clangd (C/C++), typescript-language-server with TypeScript (JavaScript/TypeScript), texlab (LaTeX), marksman (Markdown), and the VS Code JSON, CSS, and HTML servers. If you already have one installed, the editor uses it; you can also set its path in the plugin's settings. Without a server the editor still opens and highlights the file.
 

@@ -7,8 +7,9 @@ by a language server on the daemon host, with a live preview beside it where the
   definition, and references;
 - highlighting in two layers: a grammar in the app that colours as you type, and the server's
   semantic tokens over it;
-- for Typst, tinymist's live preview, updated before saving; clicking the preview moves the cursor
-  to the source, and clicking the source scrolls the preview;
+- for Typst, tinymist's live preview, updated before saving, shown beside the editor, alone, or not
+  at all; clicking the preview moves the cursor to the source (bringing the editor back if it was
+  hidden), and clicking the source scrolls the preview;
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 

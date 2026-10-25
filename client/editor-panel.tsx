@@ -47,12 +47,23 @@ const SAVE_DELAY_MS = 500;
 /** Cursor moves sent to the preview at most this often. */
 const SCROLL_INTERVAL_MS = 120;
 
+const VIEW_MODES = ["editor", "split", "preview"] as const;
+type ViewMode = (typeof VIEW_MODES)[number];
+
 const savedSchema = z.object({
-  preview: z.boolean().default(true),
+  /** Which panes show, for a language with a preview. */
+  view: z.enum(VIEW_MODES).optional(),
+  /** Tabs saved before the three-way choice: false showed the editor alone. */
+  preview: z.boolean().optional(),
   /** Invert the preview's colors. Null, from earlier versions, means off. */
   invert: z.boolean().nullable().default(false),
 });
-const defaultSaved = { preview: true, invert: false };
+type Saved = z.infer<typeof savedSchema>;
+const defaultSaved: Saved = { view: "split", invert: false };
+
+function viewMode(saved: Saved): ViewMode {
+  return saved.view ?? (saved.preview === false ? "editor" : "split");
+}
 
 type FileState = "loading" | "ready" | "conflict" | "deleted";
 type ServerState =
@@ -359,7 +370,13 @@ export function EditorPanel(props: EditorPanelProps) {
       }
       const onJump = (jump: SourceLocation) => {
         if (jump.path === file.path) {
-          editor.current?.reveal(jump.start, jump.end);
+          // A click in the preview asks for its source; with the preview alone, show the editor.
+          if (viewMode(savedRef.current) === "preview") {
+            setViewRef.current("split");
+            setTimeout(() => editor.current?.reveal(jump.start, jump.end), 50);
+          } else {
+            editor.current?.reveal(jump.start, jump.end);
+          }
           return;
         }
         toastRef.current.show(
@@ -434,7 +451,7 @@ export function EditorPanel(props: EditorPanelProps) {
       }
       if (disposed) return;
       setServer({ status: "ready", version: opened.version });
-      if (savedRef.current.preview) void startPreview();
+      if (viewMode(savedRef.current) !== "editor") void startPreview();
     })();
     return () => {
       disposed = true;
@@ -451,12 +468,16 @@ export function EditorPanel(props: EditorPanelProps) {
 
   // --- Toolbar actions.
 
-  const togglePreview = useCallback(() => {
-    const next = !savedRef.current.preview;
-    setSaved({ ...savedRef.current, preview: next });
-    if (next) void startPreview();
-    else stopPreview();
-  }, [setSaved, startPreview, stopPreview]);
+  const setView = useCallback(
+    (next: ViewMode) => {
+      setSaved({ view: next, invert: savedRef.current.invert });
+      if (next === "editor") stopPreview();
+      else void startPreview();
+    },
+    [setSaved, startPreview, stopPreview],
+  );
+  const setViewRef = useRef(setView);
+  setViewRef.current = setView;
   const toggleInvert = useCallback(() => {
     setSaved({ ...savedRef.current, invert: !invert });
   }, [invert, setSaved]);
@@ -471,7 +492,10 @@ export function EditorPanel(props: EditorPanelProps) {
 
   const styles = useMemo(() => panelStyles(theme), [theme]);
   const ready = server.status === "ready";
-  const showPreview = provider !== null && saved.preview && ready;
+  const mode: ViewMode = provider ? viewMode(saved) : "editor";
+  const showPreview = provider !== null && mode !== "editor" && ready;
+  // Until the preview can show (no server yet), keep the editor rather than an empty panel.
+  const showEditor = mode !== "preview" || !showPreview;
   let status: string;
   if (server.status === "starting") status = `Starting ${serverName}…`;
   else if (server.status === "ready")
@@ -512,15 +536,32 @@ export function EditorPanel(props: EditorPanelProps) {
                   disabled={!showPreview}
                   onPress={toggleInvert}
                 />
-                <IconButton
-                  theme={theme}
-                  icon={layout.compact ? "PanelBottom" : "PanelRight"}
-                  label="Preview"
-                  tooltip={saved.preview ? "Hide the preview" : "Show the preview"}
-                  selected={saved.preview}
-                  disabled={!ready}
-                  onPress={togglePreview}
-                />
+                <View style={styles.segment} testID="editor-plus-view-mode">
+                  <IconButton
+                    theme={theme}
+                    icon="Code"
+                    label="Editor only"
+                    selected={mode === "editor"}
+                    onPress={() => setView("editor")}
+                  />
+                  <IconButton
+                    theme={theme}
+                    icon={layout.compact ? "Rows2" : "Columns2"}
+                    label="Side by side"
+                    tooltip={layout.compact ? "Editor and preview" : "Side by side"}
+                    selected={mode === "split"}
+                    disabled={!ready}
+                    onPress={() => setView("split")}
+                  />
+                  <IconButton
+                    theme={theme}
+                    icon="Eye"
+                    label="Preview only"
+                    selected={mode === "preview"}
+                    disabled={!ready}
+                    onPress={() => setView("preview")}
+                  />
+                </View>
               </>
             ) : null}
           </View>
@@ -556,12 +597,17 @@ export function EditorPanel(props: EditorPanelProps) {
         </Banner>
       ) : null}
       <View style={[styles.body, layout.compact ? styles.column : styles.row]}>
-        <View style={styles.pane}>
+        <View style={[styles.pane, showEditor ? null : styles.hidden]}>
           <View ref={editorHost} style={styles.fill} testID="editor-plus-editor" />
           {fileState === "loading" && !fileError ? <Loading /> : null}
         </View>
         {showPreview ? (
-          <View style={[styles.pane, layout.compact ? styles.previewBelow : styles.previewBeside]}>
+          <View
+            style={[
+              styles.pane,
+              showEditor ? (layout.compact ? styles.previewBelow : styles.previewBeside) : null,
+            ]}
+          >
             <View ref={previewHost} style={styles.fill} testID="editor-plus-preview" />
             {previewLoading ? (
               <View style={styles.overlay}>
@@ -756,6 +802,16 @@ function panelStyles(theme: PluginTheme) {
     column: { flexDirection: "column" as const },
     pane: { flex: 1, minWidth: 0, minHeight: 0 },
     previewBeside: { borderLeftWidth: 1, borderLeftColor: theme.colors.border },
+    // The editor stays mounted while hidden: its language server session and text live on.
+    hidden: { display: "none" as const },
+    segment: {
+      flexDirection: "row" as const,
+      gap: 2,
+      paddingLeft: 6,
+      marginLeft: 4,
+      borderLeftWidth: 1,
+      borderLeftColor: theme.colors.border,
+    },
     previewBelow: { borderTopWidth: 1, borderTopColor: theme.colors.border },
     fill: { flex: 1, minHeight: 0 },
     overlay: {
