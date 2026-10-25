@@ -65,9 +65,9 @@ function ServerSection({
   const [confirming, setConfirming] = useState(false);
   const { name, binary } = language.server;
   const entry = settings.values.servers[language.id] ?? { path: "", compileOnSave: false };
-  const setCompileOnSave = (compileOnSave: boolean) =>
+  const update = (change: Partial<typeof entry>) =>
     void settings.save(
-      { servers: { ...settings.values.servers, [language.id]: { ...entry, compileOnSave } } },
+      { servers: { ...settings.values.servers, [language.id]: { ...entry, ...change } } },
       settings.revision,
     );
 
@@ -147,9 +147,20 @@ function ServerSection({
             }
             value={entry.compileOnSave}
             disabled={settings.saving}
-            onValueChange={setCompileOnSave}
+            onValueChange={(compileOnSave) => update({ compileOnSave })}
           />
         ) : null}
+        <SettingsSwitch
+          label="Check spelling"
+          hint={
+            language.spellcheck
+              ? "Underlines misspelled words in text and comments, skipping code, math, and references."
+              : "Underlines misspelled words in comments."
+          }
+          value={entry.spellcheck ?? language.spellcheck}
+          disabled={settings.saving}
+          onValueChange={(spellcheck) => update({ spellcheck })}
+        />
         <SettingsInput
           label={`${name} path`}
           hint="Absolute path on the daemon host. Leave empty to use the installed copy or search PATH, your login shell, and common install directories."

@@ -119,6 +119,11 @@ export function EditorPanel(props: EditorPanelProps) {
   const settings = useSettings(serverSettings);
   const compileOnSave =
     settings.status === "ready" && settings.values.servers[language.id]?.compileOnSave === true;
+  const spellcheck =
+    (settings.status === "ready" ? settings.values.servers[language.id]?.spellcheck : undefined) ??
+    language.spellcheck;
+  const spellcheckRef = useRef(spellcheck);
+  spellcheckRef.current = spellcheck;
 
   const calls = {
     open: useRpc(openSession),
@@ -321,6 +326,7 @@ export function EditorPanel(props: EditorPanelProps) {
       extension: file.extension,
       text: text.current,
       theme: themeRef.current,
+      spellcheck: spellcheckRef.current,
       onChange: (next) => {
         text.current = next;
         unsaved.current = next;
@@ -357,6 +363,10 @@ export function EditorPanel(props: EditorPanelProps) {
   useEffect(() => {
     preview.current?.instance?.setInvert(invert);
   }, [invert]);
+
+  useEffect(() => {
+    if (editorReady) editor.current?.setSpellcheck(spellcheck);
+  }, [editorReady, spellcheck]);
 
   // Open at the line Paseo asked for, such as from an agent's file reference.
   useEffect(() => {

@@ -17,7 +17,12 @@ import type { EditorLanguage } from "./index";
 // for LaTeX (there is no Lezer grammar for it). They colour the text as it is typed; the
 // language server's semantic tokens refine the colours once it has analysed the file.
 
-const plain = (support: EditorLanguage["support"]): EditorLanguage => ({ support, tags: [] });
+const COMMENTS = { kind: "comments" } as const;
+
+const plain = (
+  support: EditorLanguage["support"],
+  spelling: EditorLanguage["spelling"] = COMMENTS,
+): EditorLanguage => ({ support, tags: [], spelling });
 
 export const python_ = plain(() => python());
 export const rust_ = plain(() => rust());
@@ -29,8 +34,55 @@ export const javascript_ = plain((extension) =>
     typescript: ["ts", "mts", "cts", "tsx"].includes(extension),
   }),
 );
-export const latex_ = plain(() => StreamLanguage.define(stex));
-export const markdown_ = plain(() => markdown());
+/** LaTeX commands whose first so many arguments are names, keys, or paths; stex reads them as text. */
+const LATEX_NAME_ARGUMENTS: Record<string, number> = {
+  documentclass: 1,
+  usepackage: 1,
+  RequirePackage: 1,
+  input: 1,
+  include: 1,
+  includeonly: 1,
+  includegraphics: 1,
+  bibliography: 1,
+  bibliographystyle: 1,
+  addbibresource: 1,
+  begin: 2,
+  end: 1,
+  label: 1,
+  ref: 1,
+  eqref: 1,
+  pageref: 1,
+  autoref: 1,
+  cref: 1,
+  Cref: 1,
+  cite: 1,
+  citep: 1,
+  citet: 1,
+  citeauthor: 1,
+  nocite: 1,
+  url: 1,
+  href: 1,
+  newcommand: 2,
+  renewcommand: 2,
+  newenvironment: 3,
+  renewenvironment: 3,
+  setlength: 2,
+  usetikzlibrary: 1,
+  definecolor: 3,
+  color: 1,
+  textcolor: 1,
+  hypersetup: 1,
+  geometry: 1,
+};
+
+// `begin` skips two groups for `\begin{tabular}{lcr}`; only a group right after the environment
+// name counts, so text on the next line is still checked.
+export const latex_ = plain(() => StreamLanguage.define(stex), {
+  kind: "markup",
+  arguments: LATEX_NAME_ARGUMENTS,
+});
+// Marp decks open with YAML front matter, which the Markdown grammar reads as text.
+export const markdown_ = plain(() => markdown(), { kind: "markup", frontmatter: true });
 export const json_ = plain(() => json());
 export const css_ = plain((extension) => {
   if (extension === "scss") return sass();

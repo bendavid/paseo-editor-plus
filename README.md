@@ -17,6 +17,8 @@ by a language server on the daemon host, with a live preview beside it where the
     PDF to go to the source);
 - for Typst and LaTeX, a PDF built on every save when switched on in the settings, or with the
   toolbar's **Compile PDF**;
+- spellchecking by the browser's or desktop app's checker, of prose only: text and comments in
+  Typst, LaTeX, and Markdown (on by default), comments in code (off by default);
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
@@ -120,6 +122,14 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
   server when it saves (`textDocument/didSave`), and sends settings both ways servers read them:
   in answer to `workspace/configuration` and with `workspace/didChangeConfiguration`. **Compile
   PDF** runs `tinymist.exportPdf` or texlab's `textDocument/build`.
+- **Spelling is checked by the browser.** CodeMirror turns it off; `client/web/spelling.ts` turns
+  it on for the editor and marks everything that isn't prose `spellcheck="false"`, from the
+  grammar's tree: Typst keeps its `Text` nodes, Markdown and LaTeX keep what the grammar doesn't
+  highlight as code, and code keeps comments. Chromium skips marked spans inside a checked line
+  but ignores checked spans inside an unchecked editor, so the marks exclude code rather than
+  include text. stex reads the arguments of commands such as `\input` and `\label` as text, so
+  the LaTeX profile lists them. Suggestions and **Add to Dictionary** come from the browser's or
+  the desktop app's context menu.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
   recompiles from them. The file is saved 500 ms after the last edit, and a change on disk while
   edits are unsaved offers Reload or Overwrite.
@@ -137,6 +147,8 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
    `server/previews/` to recognise the port it announces.
 5. For building a PDF, add `compile` to the profile: the server settings for building on save, and
    the command or request that builds now.
+6. Set `spellcheck` in the profile (on for prose languages) and `spelling` in its grammar entry:
+   which parts of the file are prose.
 
 ## Limits
 
@@ -154,6 +166,9 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
   preview treats the open file as the document entry.
 - Building LaTeX needs latexmk and a TeX distribution on the daemon host, and SyncTeX linking needs
   its `synctex` tool. The PDF is expected beside the root document.
+- The spellchecker is the browser's: its languages and dictionary are the browser's or the
+  desktop app's, and it underlines without offering a list of mistakes. LaTeX arguments of
+  commands not in the profile's list are checked as text.
 - The Markdown preview is read-only (no rich editing), and Marp decks show as a scrolling list of
   slides, without presenter mode.
 

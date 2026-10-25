@@ -52,6 +52,8 @@ export interface LanguageProfile {
    * arrives a round trip late and lingers while typing.
    */
   plainTokenTypes: readonly string[];
+  /** Whether the editor checks spelling until the user chooses: on for prose, off for code. */
+  spellcheck: boolean;
 }
 
 /** Comments are the grammar's: a server's comment tokens linger over text being uncommented. */
@@ -89,6 +91,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       now: { kind: "command", command: "tinymist.exportPdf" },
     },
     plainTokenTypes: ["text", "comment", "punct", "delim"],
+    spellcheck: true,
   },
   {
     id: "python",
@@ -107,6 +110,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "rust",
@@ -125,6 +129,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "go",
@@ -144,6 +149,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "cpp",
@@ -171,6 +177,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "javascript",
@@ -198,6 +205,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "latex",
@@ -227,6 +235,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       now: { kind: "request", method: "textDocument/build" },
     },
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: true,
   },
   {
     id: "markdown",
@@ -245,6 +254,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: "markdown",
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: true,
   },
   {
     id: "json",
@@ -262,6 +272,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "css",
@@ -279,6 +290,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
   {
     id: "html",
@@ -296,6 +308,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
     preview: null,
     compile: null,
     plainTokenTypes: CODE_PLAIN,
+    spellcheck: false,
   },
 ];
 

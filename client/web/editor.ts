@@ -52,6 +52,7 @@ import type {
   LanguageClientOptions,
 } from "../web-contract";
 import { editorLanguage } from "./languages";
+import { spellcheck } from "./spelling";
 import {
   refreshSemanticTokens,
   SEMANTIC_TOKENS_CAPABILITY,
@@ -206,6 +207,8 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
   const language = editorLanguage(options.language);
   const lspSlot = new Compartment();
   const themeSlot = new Compartment();
+  const spellSlot = new Compartment();
+  const spelling = (enabled: boolean) => (enabled ? spellcheck(language.spelling) : []);
   let applyingHostText = false;
 
   const charPosition = (state: EditorState, pos: number): CharPosition => {
@@ -249,6 +252,7 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
         ]),
         EditorView.contentAttributes.of({ "aria-label": "Code editor" }),
         themeSlot.of(editorTheme(options.theme, language)),
+        spellSlot.of(spelling(options.spellcheck)),
         lspSlot.of([]),
         quickSync,
         EditorView.updateListener.of((update) => {
@@ -305,6 +309,9 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
     },
     setTheme(theme: PluginTheme) {
       view.dispatch({ effects: themeSlot.reconfigure(editorTheme(theme, language)) });
+    },
+    setSpellcheck(enabled) {
+      view.dispatch({ effects: spellSlot.reconfigure(spelling(enabled)) });
     },
     focus() {
       view.focus();

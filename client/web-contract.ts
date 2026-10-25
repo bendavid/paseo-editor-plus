@@ -21,6 +21,8 @@ export interface CodeEditor {
   refreshSemanticTokens(): void;
   format(): void;
   setTheme(theme: PluginTheme): void;
+  /** Turns the browser's spellchecker on or off for the file's prose. */
+  setSpellcheck(enabled: boolean): void;
   focus(): void;
   destroy(): void;
 }
@@ -41,6 +43,7 @@ export interface CodeEditorOptions {
   extension: string;
   text: string;
   theme: PluginTheme;
+  spellcheck: boolean;
   onChange(text: string): void;
   /** `pointer` is true when a click or drag moved the cursor. */
   onCursor(position: CharPosition, pointer: boolean): void;

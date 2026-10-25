@@ -8,6 +8,7 @@ What you can do in the editor:
 - Read code coloured as you type by the editor's own parser, refined by the language server once it has analysed the file.
 - Keep editing when an agent changes the file: with nothing unsaved the editor loads the new version; with unsaved edits it asks whether to reload or overwrite.
 - See a live preview beside the editor, alone, or not at all, updated as you type: Typst's rendered document; Markdown, shown as slides when the file is a Marp deck; and LaTeX's built PDF. Click in the preview to put the cursor on the source that produced it (for a PDF, Ctrl/Cmd-click or double-click); click in the source to see its place in the preview. You can also invert the preview's colors.
+- Check spelling as you write. Typst, LaTeX, and Markdown files have misspelled words underlined in their text and comments, leaving out code, math, references, and labels; right-click a word for suggestions or to add it to the dictionary. In code, spellchecking covers comments and is off until you turn on "Check spelling" for the language in the plugin's settings.
 - Build a PDF from Typst or LaTeX with the Compile button, or on every save by turning on "Compile to PDF on save" for the language in the plugin's settings. Typst writes the PDF beside the file; LaTeX runs latexmk beside the root document.
 
 Language servers: each language uses a server on the computer that runs the Paseo daemon: tinymist (Typst), basedpyright (Python), rust-analyzer (Rust), gopls (Go), clangd (C/C++), typescript-language-server with TypeScript (JavaScript/TypeScript), texlab (LaTeX), marksman (Markdown), and the VS Code JSON, CSS, and HTML servers. If you already have one installed, the editor uses it; you can also set its path in the plugin's settings. Without a server the editor still opens and highlights the file.
@@ -23,5 +24,5 @@ Limits:
 - Works in the desktop app and in a browser. The iOS and Android apps show the source, read-only.
 - Files opened from an agent's link or a search result open in Paseo's own editor.
 - Go to definition and preview clicks that point into another file show the file name and line instead of opening it.
-- The Typst preview shows the open file as the whole document; a chapter included from a main file is previewed on its own. LaTeX has no preview yet.
+- The Typst preview shows the open file as the whole document; a chapter included from a main file is previewed on its own.
 - Updates from the server arrive one network round trip after it sends them, so they are a little slower over a remote connection than on the same machine.

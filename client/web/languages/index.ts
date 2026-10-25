@@ -1,4 +1,5 @@
 import type { Extension } from "@codemirror/state";
+import type { SpellingRules } from "../spelling";
 import type { LanguageTags } from "../theme";
 import {
   cpp_,
@@ -18,6 +19,8 @@ import { typst } from "./typst";
 export interface EditorLanguage extends LanguageTags {
   /** The support for a file with this extension (lowercase, without the dot). */
   support(extension: string): Extension;
+  /** Which parts of a file the spellchecker reads. */
+  spelling: SpellingRules;
 }
 
 const LANGUAGES: Record<string, EditorLanguage> = {
@@ -35,7 +38,7 @@ const LANGUAGES: Record<string, EditorLanguage> = {
 };
 
 /** Plain text for a language without CodeMirror support. */
-const PLAIN: EditorLanguage = { support: () => [], tags: [] };
+const PLAIN: EditorLanguage = { support: () => [], tags: [], spelling: { kind: "markup" } };
 
 export function editorLanguage(id: string): EditorLanguage {
   return LANGUAGES[id] ?? PLAIN;

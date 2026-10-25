@@ -34,6 +34,12 @@ function typstSupport(): LanguageSupport {
 
 export const typst: EditorLanguage = {
   support: () => typstSupport(),
+  // Typst's tree names its text, so everything else (code, math, raw, labels) is left out.
+  spelling: {
+    kind: "nodes",
+    names: ["Text", "SmartQuote", "LineComment", "BlockComment"],
+    skip: ["Raw", "Equation"],
+  },
   tags: [
     { tag: typstTags.listMarker, color: "keyword" },
     { tag: typstTags.mathDelimiter, color: "math" },
