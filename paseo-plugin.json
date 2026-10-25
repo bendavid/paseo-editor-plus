@@ -1,0 +1,9 @@
+{
+  "id": "typst-tinymist",
+  "name": "Typst editor (tinymist)",
+  "description": "Edit Typst in Paseo's file tab with tinymist: completion, diagnostics, formatting, and a live preview that jumps between source and output.",
+  "requirements": {
+    "paseo": ">=0.13.0"
+  },
+  "build": [["npm", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]]
+}

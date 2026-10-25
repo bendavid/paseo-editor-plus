@@ -1,0 +1,142 @@
+import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { TinymistNotFoundError, findTinymist } from "./server/tinymist";
+import { TypstSession } from "./server/session";
+import {
+  closeSession,
+  connectPreview,
+  openSession,
+  pollSession,
+  sendLsp,
+  sendPreview,
+  tinymistSettings,
+  tinymistStatus,
+} from "./shared/rpc";
+
+/** An editor tab polls every few seconds; one gone this long was closed or lost its connection. */
+const ABANDONED_MS = 90_000;
+/** Each session is a tinymist process; this bounds what a misbehaving client can start. */
+const MAX_SESSIONS = 24;
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** The project root: the workspace directory when it contains the file, else the file's folder. */
+async function projectRoot(file: string, root: string): Promise<string> {
+  const inside = isAbsolute(root) && !relative(root, file).startsWith("..");
+  if (inside && (await isDirectory(root))) return resolve(root);
+  return dirname(file);
+}
+
+export default function contribute(server: PluginServerContext) {
+  const settings = server.registerSettings(tinymistSettings);
+  const sessions = new Map<string, TypstSession>();
+
+  async function configuredPath(): Promise<string> {
+    const state = await settings.read();
+    return state.status === "ready" ? state.values.tinymistPath : "";
+  }
+
+  function session(id: string): TypstSession | null {
+    return sessions.get(id) ?? null;
+  }
+
+  server.handle(openSession, async ({ file, root }) => {
+    if (!isAbsolute(file)) {
+      return {
+        ok: false as const,
+        reason: "failed" as const,
+        message: `Not an absolute path: ${file}`,
+      };
+    }
+    let binary;
+    try {
+      binary = await findTinymist(await configuredPath());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const reason: "missing" | "failed" =
+        error instanceof TinymistNotFoundError ? "missing" : "failed";
+      return { ok: false as const, reason, message };
+    }
+    if (sessions.size >= MAX_SESSIONS) {
+      return {
+        ok: false as const,
+        reason: "failed" as const,
+        message: `Too many Typst editors are open on this host (${MAX_SESSIONS}). Close some tabs.`,
+      };
+    }
+    const rootPath = await projectRoot(file, root);
+    const id = randomUUID();
+    sessions.set(id, new TypstSession({ id, binary: binary.path, root: rootPath }));
+    return {
+      ok: true as const,
+      sessionId: id,
+      rootUri: pathToFileURL(rootPath).href,
+      fileUri: pathToFileURL(file).href,
+      version: binary.version,
+    };
+  });
+
+  server.handle(sendLsp, ({ sessionId, messages }) => ({
+    alive: session(sessionId)?.sendLsp(messages) ?? false,
+  }));
+
+  server.handle(pollSession, async ({ sessionId, waitMs }) => {
+    const found = session(sessionId);
+    if (!found) return { alive: false, exit: "The session ended.", lsp: [], preview: [] };
+    const result = await found.poll(waitMs);
+    if (!result.alive) sessions.delete(sessionId);
+    return result;
+  });
+
+  server.handle(connectPreview, async ({ sessionId, port, includeHtml }) => {
+    const found = session(sessionId);
+    if (!found) throw new Error("The session ended.");
+    return { html: await found.connectPreview(port, includeHtml) };
+  });
+
+  server.handle(sendPreview, ({ sessionId, messages }) => ({
+    alive: session(sessionId)?.sendPreview(messages) ?? false,
+  }));
+
+  server.handle(closeSession, ({ sessionId }) => {
+    session(sessionId)?.close();
+    sessions.delete(sessionId);
+    return {};
+  });
+
+  server.handle(tinymistStatus, async () => {
+    try {
+      const binary = await findTinymist(await configuredPath());
+      return { path: binary.path, version: binary.version, source: binary.source, error: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { path: null, version: null, source: null, error: message };
+    }
+  });
+
+  const reaper = setInterval(() => {
+    const cutoff = Date.now() - ABANDONED_MS;
+    for (const [id, found] of sessions) {
+      if (found.lastSeen < cutoff) {
+        found.close();
+        sessions.delete(id);
+      }
+    }
+  }, 15_000);
+  reaper.unref();
+
+  return () => {
+    clearInterval(reaper);
+    for (const found of sessions.values()) found.close();
+    sessions.clear();
+  };
+}
