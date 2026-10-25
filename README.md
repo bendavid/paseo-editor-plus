@@ -7,9 +7,10 @@ by a language server on the daemon host, with a live preview beside it where the
   definition, and references;
 - highlighting in two layers: a grammar in the app that colours as you type, and the server's
   semantic tokens over it;
-- live previews, updated before saving and shown beside the editor, alone, or not at all; clicking
-  the preview moves the cursor to the source (bringing the editor back if it was hidden), and
-  clicking the source shows its place in the preview:
+- live previews, updated before saving and shown beside the editor, alone, or not at all; drag
+  the divider to resize the split, or its grip to put the preview on the left, right, top, or
+  bottom (kept per tab); clicking the preview moves the cursor to the source (bringing the editor
+  back if it was hidden), and clicking the source shows its place in the preview:
   - Typst: tinymist's own preview;
   - Markdown: rendered on the daemon host, as slides when the file is a
     [Marp](https://marp.app) deck (`marp: true` in its front matter);
@@ -148,6 +149,11 @@ file, so a project's word list applies as it does in VS Code.
   (each word once per editor) and underlines what it flags; cspell picks dictionaries by the
   file's language and splits compounds such as `usageSumary`. Alt+Enter because Paseo takes
   Ctrl+. for the sidebar.
+- **The split is the panel's own.** Plugins cannot split Paseo's panes or open a panel for a file
+  ([#6287](https://github.com/getpaseo/paseo/discussions/6287)), so the editor and preview share
+  one tab. `client/web/split.ts` handles the divider: a shield covers the page while dragging, so
+  the Typst preview's iframe cannot swallow the pointer, and the panes keep their DOM order
+  (the flex direction reverses for left and top), since moving an iframe reloads it.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
   recompiles from them. A change on disk while edits are unsaved offers Reload or Overwrite.
 - **Saving.** By default a file is saved 800 ms after the last edit, as Paseo's own editor does;
