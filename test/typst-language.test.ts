@@ -1,52 +1,44 @@
-import { StringStream } from "@codemirror/language";
+import { highlightTree, tagHighlighter, tags } from "@lezer/highlight";
 import { describe, expect, it } from "vitest";
-import { typstStreamParser } from "../client/web/typst-language";
+import { typst } from "../client/web/languages/typst";
+import { LanguageSupport } from "@codemirror/language";
 
-function tokens(lines: string[]): [string, string | null][][] {
-  const state = typstStreamParser.startState!(2);
-  return lines.map((line) => {
-    const out: [string, string | null][] = [];
-    if (line === "") {
-      typstStreamParser.blankLine?.(state, 2);
-      return out;
-    }
-    const stream = new StringStream(line, 2, 2);
-    while (!stream.eol()) {
-      const style = typstStreamParser.token(stream, state);
-      const text = stream.current();
-      if (text.trim()) out.push([text, style]);
-      stream.start = stream.pos;
-    }
-    return out;
+const classes = tagHighlighter([
+  { tag: tags.heading, class: "heading" },
+  { tag: tags.keyword, class: "keyword" },
+  { tag: tags.string, class: "string" },
+  { tag: tags.number, class: "number" },
+  { tag: tags.strong, class: "strong" },
+  { tag: tags.comment, class: "comment" },
+  { tag: tags.function(tags.variableName), class: "function" },
+]);
+
+function highlight(source: string): Record<string, string[]> {
+  const support = typst.support() as LanguageSupport;
+  const tree = support.language.parser.parse(source);
+  const found: Record<string, string[]> = {};
+  highlightTree(tree, classes, (from, to, cls) => {
+    for (const name of cls.split(" ")) (found[name] ??= []).push(source.slice(from, to));
   });
+  return found;
 }
 
-const styleOf = (lines: [string, string | null][][], text: string) =>
-  lines.flat().find(([token]) => token === text)?.[1];
-
-describe("Typst highlighting", () => {
-  it("tells markup, code, and math apart", () => {
-    const lines = tokens([
-      "= Introduction",
-      '#set text(size: 11pt, lang: "en")',
-      "Some *strong* text with $x^2$ and a <label>.",
-      "#let f(x) = x + 1",
-      "Back to markup.",
-    ]);
-    expect(lines[0][0]).toEqual(["= Introduction", "heading"]);
-    expect(styleOf(lines, "#set")).toBe("keyword");
-    expect(styleOf(lines, "11pt")).toBe("number");
-    expect(styleOf(lines, '"en"')).toBe("string");
-    expect(styleOf(lines, "<label>")).toBe("labelName");
-    expect(styleOf(lines, "#let")).toBe("keyword");
-    // The statement ends with its line; the next line is markup again.
-    expect(lines[4].every(([, style]) => style === null)).toBe(true);
-  });
-
-  it("keeps code blocks and comments open across lines", () => {
-    const lines = tokens(["#{", "  let x = 1", "}", "/* a", "b */ text"]);
-    expect(styleOf([lines[1]], "let")).toBe("keyword");
-    expect(lines[3][0][1]).toBe("comment");
-    expect(lines[4][0]).toEqual(["b */", "comment"]);
+describe("Typst grammar highlighting", () => {
+  it("parses markup, code, and math with Typst's own node kinds", () => {
+    const found = highlight(
+      [
+        "= Introduction",
+        '#set text(size: 11pt, lang: "en")',
+        "Some *strong* text // note",
+        "#let f(x) = x + 1",
+      ].join("\n"),
+    );
+    expect(found.heading?.join("")).toContain("Introduction");
+    expect(found.keyword).toEqual(expect.arrayContaining(["set", "let"]));
+    expect(found.string).toContain('"en"');
+    expect(found.number).toContain("11pt");
+    expect(found.strong?.join("")).toContain("strong");
+    expect(found.comment).toContain("// note");
+    expect(found.function).toContain("text");
   });
 });

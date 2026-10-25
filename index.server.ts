@@ -3,8 +3,9 @@ import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { TinymistNotFoundError, findTinymist } from "./server/tinymist";
-import { TypstSession } from "./server/session";
+import { findServer, ServerNotFoundError } from "./server/discovery";
+import { EditorSession } from "./server/session";
+import { type LanguageProfile, languageById } from "./shared/languages";
 import {
   closeSession,
   connectPreview,
@@ -12,13 +13,13 @@ import {
   pollSession,
   sendLsp,
   sendPreview,
-  tinymistSettings,
-  tinymistStatus,
+  serverSettings,
+  serverStatus,
 } from "./shared/rpc";
 
 /** An editor tab polls every few seconds; one gone this long was closed or lost its connection. */
 const ABANDONED_MS = 90_000;
-/** Each session is a tinymist process; this bounds what a misbehaving client can start. */
+/** Each session is a language server process; this bounds what a misbehaving client can start. */
 const MAX_SESSIONS = 24;
 
 async function isDirectory(path: string): Promise<boolean> {
@@ -37,19 +38,30 @@ async function projectRoot(file: string, root: string): Promise<string> {
 }
 
 export default function contribute(server: PluginServerContext) {
-  const settings = server.registerSettings(tinymistSettings);
-  const sessions = new Map<string, TypstSession>();
+  const settings = server.registerSettings(serverSettings);
+  const sessions = new Map<string, EditorSession>();
 
-  async function configuredPath(): Promise<string> {
+  async function locate(language: LanguageProfile) {
     const state = await settings.read();
-    return state.status === "ready" ? state.values.tinymistPath : "";
+    const configured =
+      state.status === "ready" ? (state.values.servers[language.id]?.path ?? "") : "";
+    const { binary, homepage } = language.server;
+    return findServer({ binary, configured, homepage });
   }
 
-  function session(id: string): TypstSession | null {
+  function session(id: string): EditorSession | null {
     return sessions.get(id) ?? null;
   }
 
-  server.handle(openSession, async ({ file, root }) => {
+  server.handle(openSession, async ({ language: languageId, file, root }) => {
+    const language = languageById(languageId);
+    if (!language) {
+      return {
+        ok: false as const,
+        reason: "failed" as const,
+        message: `This version of the plugin does not know the language "${languageId}".`,
+      };
+    }
     if (!isAbsolute(file)) {
       return {
         ok: false as const,
@@ -59,23 +71,33 @@ export default function contribute(server: PluginServerContext) {
     }
     let binary;
     try {
-      binary = await findTinymist(await configuredPath());
+      binary = await locate(language);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const reason: "missing" | "failed" =
-        error instanceof TinymistNotFoundError ? "missing" : "failed";
+        error instanceof ServerNotFoundError ? "missing" : "failed";
       return { ok: false as const, reason, message };
     }
     if (sessions.size >= MAX_SESSIONS) {
       return {
         ok: false as const,
         reason: "failed" as const,
-        message: `Too many Typst editors are open on this host (${MAX_SESSIONS}). Close some tabs.`,
+        message: `Too many editors with language servers are open on this host (${MAX_SESSIONS}). Close some tabs.`,
       };
     }
     const rootPath = await projectRoot(file, root);
     const id = randomUUID();
-    sessions.set(id, new TypstSession({ id, binary: binary.path, root: rootPath }));
+    sessions.set(
+      id,
+      new EditorSession({
+        id,
+        binary: binary.path,
+        args: language.server.args,
+        name: language.server.name,
+        root: rootPath,
+        preview: language.preview,
+      }),
+    );
     return {
       ok: true as const,
       sessionId: id,
@@ -113,9 +135,13 @@ export default function contribute(server: PluginServerContext) {
     return {};
   });
 
-  server.handle(tinymistStatus, async () => {
+  server.handle(serverStatus, async ({ language: languageId }) => {
+    const language = languageById(languageId);
+    if (!language) {
+      return { path: null, version: null, source: null, error: `Unknown language ${languageId}.` };
+    }
     try {
-      const binary = await findTinymist(await configuredPath());
+      const binary = await locate(language);
       return { path: binary.path, version: binary.version, source: binary.source, error: null };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

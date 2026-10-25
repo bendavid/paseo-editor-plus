@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TypstConnection, type SessionCalls } from "../client/connection";
+import { SessionConnection, type SessionCalls } from "../client/connection";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -7,7 +7,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-describe("TypstConnection", () => {
+describe("SessionConnection", () => {
   it("sends one batch at a time, in order", async () => {
     const batches: string[][] = [];
     const gates: ReturnType<typeof deferred<{ alive: boolean }>>[] = [];
@@ -23,7 +23,7 @@ describe("TypstConnection", () => {
       sendPreview: async () => ({ alive: true }),
       close: async () => ({}),
     };
-    const connection = new TypstConnection(calls, "s", { lsp() {}, preview() {}, ended() {} });
+    const connection = new SessionConnection(calls, "s", { lsp() {}, preview() {}, ended() {} });
     connection.sendLsp("1");
     connection.sendLsp("2");
     connection.sendLsp("3");
@@ -35,7 +35,7 @@ describe("TypstConnection", () => {
     connection.close();
   });
 
-  it("delivers polled messages and ends when tinymist exits", async () => {
+  it("delivers polled messages and ends when the server exits", async () => {
     const lsp: string[] = [];
     const ended = deferred<string>();
     let polls = 0;
@@ -49,7 +49,7 @@ describe("TypstConnection", () => {
       sendPreview: async () => ({ alive: true }),
       close: async () => ({}),
     };
-    new TypstConnection(calls, "s", {
+    new SessionConnection(calls, "s", {
       lsp: (m) => lsp.push(m),
       preview() {},
       ended: ended.resolve,

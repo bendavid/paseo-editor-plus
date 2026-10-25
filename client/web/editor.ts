@@ -6,13 +6,7 @@ import {
   completionKeymap,
 } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import {
-  bracketMatching,
-  HighlightStyle,
-  indentOnInput,
-  StreamLanguage,
-  syntaxHighlighting,
-} from "@codemirror/language";
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput } from "@codemirror/language";
 import { lintKeymap } from "@codemirror/lint";
 import {
   findReferencesKeymap,
@@ -48,20 +42,24 @@ import {
   lineNumbers,
   ViewPlugin,
 } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
 import { charToUtf16Column, utf16ToCharColumn } from "../columns";
 import type {
   CharPosition,
+  CodeEditor,
+  CodeEditorOptions,
   LanguageClient,
+  LanguageClientFile,
   LanguageClientOptions,
-  TypstEditor,
-  TypstEditorOptions,
 } from "../web-contract";
-import { typstStreamParser } from "./typst-language";
+import { editorLanguage } from "./languages";
+import {
+  refreshSemanticTokens,
+  SEMANTIC_TOKENS_CAPABILITY,
+  semanticTokens,
+} from "./semantic-tokens";
+import { editorTheme } from "./theme";
 
-export type { CharPosition } from "../web-contract";
-
-/** How long after typing the text goes to tinymist, which recompiles the preview. */
+/** How long after typing the text goes to the server; a preview recompiles from it. */
 const SYNC_DELAY_MS = 120;
 
 /** One file per client; definitions elsewhere are reported instead of opened. */
@@ -118,7 +116,7 @@ class SingleFileWorkspace extends Workspace {
 }
 
 /**
- * Hover and completion documentation is Markdown from tinymist, which can quote package docs.
+ * Hover and completion documentation is Markdown from the server, which can quote package docs.
  * Keep the formatting and drop anything that could run.
  */
 function sanitizeHtml(html: string): string {
@@ -141,16 +139,18 @@ function sanitizeHtml(html: string): string {
 export function createLanguageClient(options: LanguageClientOptions): LanguageClient {
   const client = new LSPClient({
     rootUri: options.rootUri,
-    // Requests cross the network when the daemon is remote, and tinymist compiles first.
+    // Requests cross the network when the daemon is remote, and servers may compile first.
     timeout: 20_000,
     initializationOptions: options.initializationOptions,
     sanitizeHTML: sanitizeHtml,
     workspace: (lspClient) => new SingleFileWorkspace(lspClient, options.otherFile),
     extensions: [
-      serverCompletion(),
+      // With a server, its completions replace the language's own, which would repeat them.
+      serverCompletion({ override: true }),
       hoverTooltips(),
       signatureHelp(),
       serverDiagnostics(),
+      { clientCapabilities: SEMANTIC_TOKENS_CAPABILITY },
       {
         editorExtension: keymap.of([
           ...formatKeymap,
@@ -164,7 +164,7 @@ export function createLanguageClient(options: LanguageClientOptions): LanguageCl
   return client.connect(options.transport as Transport);
 }
 
-/** Sends edits to tinymist soon after typing, so the preview keeps up. */
+/** Sends edits to the server soon after typing, so a preview keeps up. */
 const quickSync = ViewPlugin.fromClass(
   class {
     private timer: ReturnType<typeof setTimeout> | null = null;
@@ -183,93 +183,8 @@ const quickSync = ViewPlugin.fromClass(
   },
 );
 
-function isDark(theme: PluginTheme): boolean {
-  const hex = /^#?([0-9a-f]{6})$/i.exec(theme.colors.surface0.trim())?.[1];
-  if (!hex) return false;
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
-}
-
-function highlightStyle(theme: PluginTheme): HighlightStyle {
-  const dark = isDark(theme);
-  const c = dark
-    ? {
-        keyword: "#c792ea",
-        fn: "#82aaff",
-        string: "#c3e88d",
-        number: "#f78c6c",
-        comment: "#7f848e",
-        heading: "#ffcb6b",
-        label: "#89ddff",
-        math: "#f07178",
-      }
-    : {
-        keyword: "#7c3aed",
-        fn: "#1d4ed8",
-        string: "#15803d",
-        number: "#b45309",
-        comment: "#6b7280",
-        heading: "#b91c1c",
-        label: "#0e7490",
-        math: "#be185d",
-      };
-  return HighlightStyle.define([
-    { tag: tags.keyword, color: c.keyword },
-    { tag: [tags.function(tags.variableName), tags.propertyName], color: c.fn },
-    { tag: tags.variableName, color: c.fn },
-    { tag: tags.special(tags.variableName), color: c.math },
-    { tag: tags.string, color: c.string },
-    { tag: [tags.number, tags.atom], color: c.number },
-    { tag: tags.comment, color: c.comment, fontStyle: "italic" },
-    { tag: tags.heading, color: c.heading, fontWeight: "bold" },
-    { tag: tags.strong, fontWeight: "bold" },
-    { tag: tags.emphasis, fontStyle: "italic" },
-    { tag: [tags.labelName, tags.link, tags.url], color: c.label },
-    { tag: tags.monospace, color: c.string },
-    { tag: [tags.escape, tags.list, tags.meta], color: c.keyword },
-  ]);
-}
-
-function editorTheme(theme: PluginTheme) {
-  const { colors } = theme;
-  return EditorView.theme(
-    {
-      "&": { height: "100%", color: colors.foreground, backgroundColor: colors.surface0 },
-      ".cm-scroller": {
-        overflow: "auto",
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace",
-        fontSize: "13px",
-        lineHeight: "1.55",
-      },
-      ".cm-content": { padding: "8px 0", caretColor: colors.foreground },
-      ".cm-cursor, .cm-dropCursor": { borderLeftColor: colors.foreground },
-      ".cm-gutters": {
-        backgroundColor: colors.surface0,
-        color: colors.foregroundMuted,
-        border: "none",
-      },
-      ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: colors.surface1 },
-      "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-        backgroundColor: `${colors.accent}40`,
-      },
-      ".cm-tooltip": {
-        backgroundColor: colors.surface0,
-        color: colors.foreground,
-        border: `1px solid ${colors.border}`,
-        borderRadius: "6px",
-      },
-      ".cm-tooltip-autocomplete ul li[aria-selected]": {
-        backgroundColor: colors.accent,
-        color: colors.accentForeground,
-      },
-      ".cm-panels": { backgroundColor: colors.surface1, color: colors.foreground },
-      ".cm-lsp-documentation code, .cm-lsp-documentation pre": { fontSize: "12px" },
-    },
-    { dark: isDark(theme) },
-  );
-}
-
-export function createTypstEditor(options: TypstEditorOptions): TypstEditor {
+export function createEditor(options: CodeEditorOptions): CodeEditor {
+  const language = editorLanguage(options.language);
   const lspSlot = new Compartment();
   const themeSlot = new Compartment();
   let applyingHostText = false;
@@ -290,6 +205,7 @@ export function createTypstEditor(options: TypstEditorOptions): TypstEditor {
       doc: options.text,
       extensions: [
         lineNumbers(),
+        foldGutter(),
         highlightActiveLineGutter(),
         highlightSpecialChars(),
         history(),
@@ -300,22 +216,20 @@ export function createTypstEditor(options: TypstEditorOptions): TypstEditor {
         autocompletion(),
         highlightActiveLine(),
         highlightSelectionMatches(),
-        StreamLanguage.define(typstStreamParser),
+        language.support(),
         EditorView.lineWrapping,
         keymap.of([
           ...closeBracketsKeymap,
           ...defaultKeymap,
           ...searchKeymap,
           ...historyKeymap,
+          ...foldKeymap,
           ...completionKeymap,
           ...lintKeymap,
           indentWithTab,
         ]),
-        EditorView.contentAttributes.of({ "aria-label": "Typst editor" }),
-        themeSlot.of([
-          editorTheme(options.theme),
-          syntaxHighlighting(highlightStyle(options.theme)),
-        ]),
+        EditorView.contentAttributes.of({ "aria-label": "Code editor" }),
+        themeSlot.of(editorTheme(options.theme, language)),
         lspSlot.of([]),
         quickSync,
         EditorView.updateListener.of((update) => {
@@ -354,20 +268,24 @@ export function createTypstEditor(options: TypstEditorOptions): TypstEditor {
     cursor() {
       return charPosition(view.state, view.state.selection.main.head);
     },
-    setLanguageClient(client, fileUri) {
+    setLanguageClient(client, file: LanguageClientFile | null) {
       const lsp = client as LSPClient | null;
-      view.dispatch({ effects: lspSlot.reconfigure(lsp ? lsp.plugin(fileUri, "typst") : []) });
+      view.dispatch({
+        effects: lspSlot.reconfigure(
+          lsp && file
+            ? [lsp.plugin(file.uri, file.languageId), semanticTokens(file.plainTokenTypes)]
+            : [],
+        ),
+      });
+    },
+    refreshSemanticTokens() {
+      view.dispatch({ effects: refreshSemanticTokens.of(null) });
     },
     format() {
       formatDocument(view);
     },
-    setTheme(theme) {
-      view.dispatch({
-        effects: themeSlot.reconfigure([
-          editorTheme(theme),
-          syntaxHighlighting(highlightStyle(theme)),
-        ]),
-      });
+    setTheme(theme: PluginTheme) {
+      view.dispatch({ effects: themeSlot.reconfigure(editorTheme(theme, language)) });
     },
     focus() {
       view.focus();

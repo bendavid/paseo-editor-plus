@@ -127,7 +127,7 @@ export function TooltipProvider({
         <View
           pointerEvents="none"
           role="tooltip"
-          testID="typst-tooltip"
+          testID="editor-plus-tooltip"
           onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
           style={[
             styles.tooltip,

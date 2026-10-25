@@ -1,7 +1,7 @@
 {
-  "id": "typst-tinymist",
-  "name": "Typst editor (tinymist)",
-  "description": "Edit Typst in Paseo's file tab with tinymist: completion, diagnostics, formatting, and a live preview that jumps between source and output.",
+  "id": "editor-plus",
+  "name": "Editor Plus",
+  "description": "A code editor for Paseo's file tab with language servers and live previews: Typst with tinymist first.",
   "requirements": {
     "paseo": ">=0.13.0"
   },

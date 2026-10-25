@@ -28,14 +28,18 @@ import {
   sendLsp,
   sendPreview,
 } from "../shared/rpc";
-import { messageOf, TypstConnection } from "./connection";
-import { LspTransport, type SourceJump } from "./lsp-transport";
+import type { LanguageProfile } from "../shared/languages";
+import { isDark } from "./colors";
+import { messageOf, SessionConnection } from "./connection";
+import { LspTransport } from "./lsp-transport";
+import { previewProvider } from "./previews";
+import type { SourceLocation } from "./previews/types";
 import { TooltipProvider, useTooltip } from "./tooltip";
 import type {
   CharPosition,
+  CodeEditor,
   LanguageClient,
   PreviewView,
-  TypstEditor,
   WebModules,
 } from "./web-contract";
 
@@ -50,27 +54,11 @@ const savedSchema = z.object({
 });
 const defaultSaved = { preview: true, invert: null };
 
-/** tinymist settings for this editor. See tinymist's configuration reference. */
-const TINYMIST_OPTIONS = {
-  // Jumps from the preview arrive as a notification the editor handles itself.
-  customizedShowDocument: true,
-  formatterMode: "typstyle",
-  semanticTokens: "disable",
-  exportPdf: "never",
-};
-
 type FileState = "loading" | "ready" | "conflict" | "deleted";
 type ServerState =
   | { status: "starting" }
   | { status: "ready"; version: string | null }
   | { status: "missing" | "failed" | "ended"; message: string };
-
-function isDark(theme: PluginTheme): boolean {
-  const hex = /^#?([0-9a-f]{6})$/i.exec(theme.colors.surface0.trim())?.[1];
-  if (!hex) return false;
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
-}
 
 function pathFromUri(uri: string): string {
   if (!uri.startsWith("file://")) return uri;
@@ -85,12 +73,15 @@ function baseName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-export interface TypstEditorPanelProps extends PluginFilePanelProps {
+export interface EditorPanelProps extends PluginFilePanelProps {
+  language: LanguageProfile;
   openSettings(): void;
 }
 
-export function TypstEditorPanel(props: TypstEditorPanelProps) {
-  const { file, tab, theme, workspaceId, layout, params, revision, openSettings } = props;
+export function EditorPanel(props: EditorPanelProps) {
+  const { file, tab, theme, workspaceId, layout, params, revision, openSettings, language } = props;
+  const provider = useMemo(() => previewProvider(language.preview), [language.preview]);
+  const serverName = language.server.name;
   const { setModified } = tab;
   const web = useMemo(() => (require("./web") as { webModules: WebModules }).webModules, []);
   const toast = useToast();
@@ -122,7 +113,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
   const panel = useRef<View>(null);
   const editorHost = useRef<View>(null);
   const previewHost = useRef<View>(null);
-  const editor = useRef<TypstEditor | null>(null);
+  const editor = useRef<CodeEditor | null>(null);
   const text = useRef("");
   const unsaved = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -133,7 +124,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
   const [server, setServer] = useState<ServerState>({ status: "starting" });
   const [restarts, setRestarts] = useState(0);
   const session = useRef<{
-    connection: TypstConnection;
+    connection: SessionConnection;
     client: LanguageClient;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -206,19 +197,24 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
 
   // --- The preview, inside this panel, fed through the session.
 
+  /** How a preview reaches the language server: commands, and the file it shows. */
+  const previewContext = useCallback(
+    (client: LanguageClient) => ({
+      filePath: file.path,
+      command: (name: string, args: unknown[]) =>
+        client.request("workspace/executeCommand", { command: name, arguments: args }),
+    }),
+    [file.path],
+  );
+
   const scrollPreview = useCallback(
     (position: CharPosition) => {
       const client = session.current?.client;
       const task = preview.current;
-      if (!client || !task) return;
-      void client
-        .request("workspace/executeCommand", {
-          command: "tinymist.scrollPreview",
-          arguments: [task.taskId, { event: "panelScrollTo", filepath: file.path, ...position }],
-        })
-        .catch(() => {});
+      if (!client || !task?.taskId || !provider) return;
+      void provider.reveal(previewContext(client), task.taskId, position).catch(() => {});
     },
-    [file.path],
+    [previewContext, provider],
   );
 
   const stopPreview = useCallback(() => {
@@ -226,40 +222,26 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
     preview.current = null;
     if (!task) return;
     task.view?.destroy();
-    void session.current?.client
-      .request("workspace/executeCommand", {
-        command: "tinymist.doKillPreview",
-        arguments: [task.taskId],
-      })
-      .catch(() => {});
-  }, []);
+    const client = session.current?.client;
+    if (client && provider && task.taskId) {
+      void provider.stop(previewContext(client), task.taskId).catch(() => {});
+    }
+  }, [previewContext, provider]);
 
   const startPreview = useCallback(async () => {
     const current = session.current;
-    if (!current || preview.current) return;
-    const taskId = `paseo-${Math.random().toString(36).slice(2, 10)}`;
-    const task = { taskId, view: null as PreviewView | null, pending: [] as PreviewFrame[] };
+    if (!current || preview.current || !provider) return;
+    const task = { taskId: "", view: null as PreviewView | null, pending: [] as PreviewFrame[] };
     preview.current = task;
     setPreviewError(null);
     setPreviewLoading(true);
     try {
-      const started = (await current.client.request("workspace/executeCommand", {
-        command: "tinymist.doStartPreview",
-        arguments: [
-          [
-            "--task-id",
-            taskId,
-            "--data-plane-host",
-            "127.0.0.1:0",
-            "--invert-colors=never",
-            "--partial-rendering=true",
-            "--no-open",
-            file.path,
-          ],
-        ],
-      })) as { dataPlanePort?: number } | null;
-      const port = started?.dataPlanePort;
-      if (!port) throw new Error("tinymist did not start a preview.");
+      const { task: taskId, port } = await provider.start(previewContext(current.client));
+      task.taskId = taskId;
+      if (preview.current !== task) {
+        void provider.stop(previewContext(current.client), taskId).catch(() => {});
+        return;
+      }
       const sessionId = current.connection.sessionId;
       const { html } = await callsRef.current.connectPreview({
         sessionId,
@@ -276,7 +258,11 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
           },
           send: (message) => current.connection.sendPreview(message),
         },
-        { invert: invertRef.current, background: themeRef.current.colors.surface1 },
+        {
+          invert: invertRef.current,
+          background: themeRef.current.colors.surface1,
+          invertTarget: provider.invertTarget,
+        },
       );
       task.view = view;
       for (const frame of task.pending) view.deliver(frame);
@@ -289,14 +275,15 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
     } finally {
       setPreviewLoading(false);
     }
-  }, [file.path, web]);
+  }, [previewContext, provider, web]);
 
   // --- The editor, mounted once the text is known.
 
   useLayoutEffect(() => {
     if (fileState === "loading" || editor.current) return;
-    editor.current = web.createTypstEditor({
+    editor.current = web.createEditor({
       parent: editorHost.current,
+      language: language.id,
       text: text.current,
       theme: themeRef.current,
       onChange: (next) => {
@@ -316,7 +303,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
     });
     setEditorReady(true);
     // Mounts once; theme changes go through setTheme below.
-  }, [fileState, scrollPreview, setModified, web]);
+  }, [fileState, language.id, scrollPreview, setModified, web]);
 
   useEffect(
     () => () => {
@@ -341,7 +328,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
     editor.current?.reveal({ line: Math.max(0, params.lineStart - 1), character: 0 });
   }, [editorReady, params.lineStart, revision]);
 
-  // --- The session: tinymist on the daemon host, connected to the editor.
+  // --- The session: the language server on the daemon host, connected to the editor.
 
   useEffect(() => {
     if (!editorReady) return;
@@ -351,7 +338,11 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
       const rpc = callsRef.current;
       let opened;
       try {
-        opened = await rpc.open({ file: file.path, root: workspaceDirRef.current ?? "" });
+        opened = await rpc.open({
+          language: language.id,
+          file: file.path,
+          root: workspaceDirRef.current ?? "",
+        });
       } catch (cause) {
         if (!disposed) setServer({ status: "failed", message: messageOf(cause) });
         return;
@@ -364,20 +355,22 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
         setServer({ status: opened.reason, message: opened.message });
         return;
       }
-      const onJump = (jump: SourceJump) => {
-        if (!jump.start) return;
-        const position = { line: jump.start[0], character: jump.start[1] };
-        const end = jump.end ? { line: jump.end[0], character: jump.end[1] } : null;
-        if (jump.filepath === file.path) {
-          editor.current?.reveal(position, end);
+      const onJump = (jump: SourceLocation) => {
+        if (jump.path === file.path) {
+          editor.current?.reveal(jump.start, jump.end);
           return;
         }
         toastRef.current.show(
-          `That is in ${baseName(jump.filepath)}, line ${position.line + 1}. Open it from Files.`,
+          `That is in ${baseName(jump.path)}, line ${jump.start.line + 1}. Open it from Files.`,
         );
       };
+      const clientFile = {
+        uri: opened.fileUri,
+        languageId: language.languageId,
+        plainTokenTypes: language.plainTokenTypes,
+      };
       let transport: LspTransport | null = null;
-      const connection = new TypstConnection(
+      const connection = new SessionConnection(
         {
           send: (input) => callsRef.current.send(input),
           poll: (input) => callsRef.current.poll(input),
@@ -395,7 +388,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
           },
           ended: (reason) => {
             if (disposed) return;
-            editor.current?.setLanguageClient(null, opened.fileUri);
+            editor.current?.setLanguageClient(null, null);
             preview.current?.view?.destroy();
             preview.current = null;
             session.current = null;
@@ -405,20 +398,32 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
       );
       transport = new LspTransport(
         (message) => connection.sendLsp(message),
-        { scrollSource: onJump },
-        TINYMIST_OPTIONS,
+        {
+          notification: (method, params) => {
+            if (!provider) return false;
+            const jump = provider.sourceJump(method, params);
+            if (jump) {
+              onJump(jump);
+              return true;
+            }
+            return provider.swallows(method);
+          },
+          refreshSemanticTokens: () => editor.current?.refreshSemanticTokens(),
+        },
+        language.server.options,
+        language.server.configSection,
       );
       const client = web.createLanguageClient({
         rootUri: opened.rootUri,
         transport,
-        initializationOptions: TINYMIST_OPTIONS,
+        initializationOptions: { ...language.server.options },
         otherFile: (uri) =>
           toastRef.current.show(
             `The definition is in ${baseName(pathFromUri(uri))}. Open it from Files.`,
           ),
       });
       session.current = { connection, client };
-      editor.current?.setLanguageClient(client, opened.fileUri);
+      editor.current?.setLanguageClient(client, clientFile);
       try {
         await client.initializing;
       } catch (cause) {
@@ -435,12 +440,12 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
       const current = session.current;
       session.current = null;
       if (current) {
-        editor.current?.setLanguageClient(null, "");
+        editor.current?.setLanguageClient(null, null);
         current.client.disconnect();
         current.connection.close();
       }
     };
-  }, [editorReady, file.path, restarts, startPreview, stopPreview, web]);
+  }, [editorReady, file.path, language, provider, restarts, startPreview, stopPreview, web]);
 
   // --- Toolbar actions.
 
@@ -464,18 +469,18 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
 
   const styles = useMemo(() => panelStyles(theme), [theme]);
   const ready = server.status === "ready";
-  const showPreview = saved.preview && ready;
+  const showPreview = provider !== null && saved.preview && ready;
   let status: string;
-  if (server.status === "starting") status = "Starting tinymist…";
+  if (server.status === "starting") status = `Starting ${serverName}…`;
   else if (server.status === "ready")
-    status = server.version ? `tinymist ${server.version}` : "tinymist";
-  else status = server.status === "missing" ? "tinymist not found" : "tinymist stopped";
+    status = server.version ? `${serverName} ${server.version}` : serverName;
+  else status = server.status === "missing" ? `${serverName} not found` : `${serverName} stopped`;
 
   return (
     <View ref={panel} style={styles.panel}>
       <TooltipProvider panel={panel} theme={theme}>
-        <View style={styles.toolbar} testID="typst-toolbar">
-          <Text style={styles.status} numberOfLines={1} testID="typst-status">
+        <View style={styles.toolbar} testID="editor-plus-toolbar">
+          <Text style={styles.status} numberOfLines={1} testID="editor-plus-status">
             {status}
           </Text>
           <View style={styles.group}>
@@ -487,36 +492,40 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
               disabled={!ready}
               onPress={format}
             />
-            <IconButton
-              theme={theme}
-              icon="LocateFixed"
-              label="Show in preview"
-              tooltip="Show the cursor's position in the preview"
-              disabled={!showPreview}
-              onPress={showInPreview}
-            />
-            <IconButton
-              theme={theme}
-              icon="Contrast"
-              label={invert ? "Show original preview colors" : "Invert preview colors"}
-              selected={invert}
-              disabled={!showPreview}
-              onPress={toggleInvert}
-            />
-            <IconButton
-              theme={theme}
-              icon={layout.compact ? "PanelBottom" : "PanelRight"}
-              label="Preview"
-              tooltip={saved.preview ? "Hide the preview" : "Show the preview"}
-              selected={saved.preview}
-              disabled={!ready}
-              onPress={togglePreview}
-            />
+            {provider ? (
+              <>
+                <IconButton
+                  theme={theme}
+                  icon="LocateFixed"
+                  label="Show in preview"
+                  tooltip="Show the cursor's position in the preview"
+                  disabled={!showPreview}
+                  onPress={showInPreview}
+                />
+                <IconButton
+                  theme={theme}
+                  icon="Contrast"
+                  label={invert ? "Show original preview colors" : "Invert preview colors"}
+                  selected={invert}
+                  disabled={!showPreview}
+                  onPress={toggleInvert}
+                />
+                <IconButton
+                  theme={theme}
+                  icon={layout.compact ? "PanelBottom" : "PanelRight"}
+                  label="Preview"
+                  tooltip={saved.preview ? "Hide the preview" : "Show the preview"}
+                  selected={saved.preview}
+                  disabled={!ready}
+                  onPress={togglePreview}
+                />
+              </>
+            ) : null}
           </View>
         </View>
       </TooltipProvider>
       {fileState === "conflict" ? (
-        <Banner theme={theme} testID="typst-conflict" text="The file changed on disk.">
+        <Banner theme={theme} testID="editor-plus-conflict" text="The file changed on disk.">
           <TextButton theme={theme} label="Reload" onPress={reload} />
           <TextButton theme={theme} label="Overwrite" onPress={overwrite} />
         </Banner>
@@ -530,7 +539,7 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
           theme={theme}
           danger={server.status !== "missing"}
           text={server.message}
-          testID="typst-server-error"
+          testID="editor-plus-server-error"
         >
           {server.status === "missing" ? (
             <TextButton theme={theme} label="Settings" onPress={openSettings} />
@@ -544,12 +553,12 @@ export function TypstEditorPanel(props: TypstEditorPanelProps) {
       ) : null}
       <View style={[styles.body, layout.compact ? styles.column : styles.row]}>
         <View style={styles.pane}>
-          <View ref={editorHost} style={styles.fill} testID="typst-editor" />
+          <View ref={editorHost} style={styles.fill} testID="editor-plus-editor" />
           {fileState === "loading" && !fileError ? <Loading /> : null}
         </View>
         {showPreview ? (
           <View style={[styles.pane, layout.compact ? styles.previewBelow : styles.previewBeside]}>
-            <View ref={previewHost} style={styles.fill} testID="typst-preview" />
+            <View ref={previewHost} style={styles.fill} testID="editor-plus-preview" />
             {previewLoading ? (
               <View style={styles.overlay}>
                 <Loading />

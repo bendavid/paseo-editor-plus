@@ -57,6 +57,6 @@ describe("client bundle", () => {
       ),
     };
     module.exports.default?.(client);
-    expect(registered).toEqual(["settings:tinymist", "panel:typst:typ"]);
+    expect(registered).toEqual(["settings:servers", "panel:typst:typ"]);
   });
 });

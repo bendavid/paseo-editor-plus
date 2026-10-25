@@ -1,15 +1,17 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import type { PreviewFrame } from "../shared/rpc";
+import type { PreviewKind } from "../shared/languages";
 import { frameLspMessage, LspMessageReader } from "./framing";
+import { announcedPreviewPorts } from "./previews";
 
-/** How long tinymist gets to exit after its input closes, before it is killed. */
+/** How long the language server gets to exit after its input closes, before it is killed. */
 const EXIT_GRACE_MS = 2000;
-/** Warnings and errors from tinymist's log kept to explain a crash. */
+/** Warnings and errors from the server's log kept to explain a crash. */
 const LOG_LINES = 20;
 const NOTEWORTHY = /\b(ERROR|WARN)\b|panicked/;
 /**
  * Preview data held for an app that stopped polling. Past this the frames are dropped and the
- * preview reconnects, which makes tinymist send the whole document again.
+ * preview reconnects, which makes the server send the whole document again.
  */
 const MAX_QUEUED_PREVIEW_BYTES = 64 * 1024 * 1024;
 /** After a message arrives, wait this long for more before answering a poll. */
@@ -24,12 +26,17 @@ export interface PollResult {
 
 export interface SessionOptions {
   id: string;
+  /** The language server's executable and arguments, such as tinymist and ["lsp"]. */
   binary: string;
+  args: readonly string[];
+  /** Shown in messages, such as "tinymist". */
+  name: string;
   root: string;
+  preview: PreviewKind | null;
 }
 
-/** One `tinymist lsp` process and its preview connection, for one editor tab. */
-export class TypstSession {
+/** One language server process and its preview connection, for one editor tab. */
+export class EditorSession {
   readonly id: string;
   /** When the app last polled; sessions it abandons are closed. */
   lastSeen = Date.now();
@@ -45,9 +52,14 @@ export class TypstSession {
   private socket: WebSocket | null = null;
   private closed = false;
 
-  constructor({ id, binary, root }: SessionOptions) {
+  private readonly name: string;
+  private readonly previewKind: PreviewKind | null;
+
+  constructor({ id, binary, args, name, root, preview }: SessionOptions) {
     this.id = id;
-    this.process = spawn(binary, ["lsp"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+    this.name = name;
+    this.previewKind = preview;
+    this.process = spawn(binary, [...args], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
     this.process.stdout.on("data", (chunk: Buffer) => {
       for (const message of this.reader.push(chunk)) this.fromServer(message);
     });
@@ -58,17 +70,19 @@ export class TypstSession {
         if (this.log.length > LOG_LINES) this.log.shift();
       }
     });
-    this.process.on("error", (error) => this.ended(`tinymist could not start: ${error.message}`));
+    this.process.on("error", (error) =>
+      this.ended(`${this.name} could not start: ${error.message}`),
+    );
     this.process.on("exit", (code, signal) => {
       if (this.closed) return;
       if (signal) {
-        this.ended(`tinymist was stopped (${signal}).`);
+        this.ended(`${this.name} was stopped (${signal}).`);
         return;
       }
       const tail = this.log.slice(-4).join("\n");
-      this.ended(`tinymist exited with code ${code}.${tail ? `\n${tail}` : ""}`);
+      this.ended(`${this.name} exited with code ${code}.${tail ? `\n${tail}` : ""}`);
     });
-    // Writing after tinymist exits raises EPIPE on the stream; the exit handler reports it.
+    // Writing after the server exits raises EPIPE on the stream; the exit handler reports it.
     this.process.stdin.on("error", () => {});
   }
 
@@ -109,12 +123,12 @@ export class TypstSession {
   }
 
   /**
-   * Connects to the preview server tinymist started for this session, replacing any earlier
+   * Connects to the preview server started for this session, replacing any earlier
    * connection, and returns the preview page when asked.
    */
   async connectPreview(port: number, includeHtml: boolean): Promise<string | null> {
     if (!this.previewPorts.has(port)) {
-      throw new Error(`tinymist did not start a preview on port ${port} for this tab.`);
+      throw new Error(`${this.name} did not start a preview on port ${port} for this tab.`);
     }
     const WebSocketClass = globalThis.WebSocket;
     if (!WebSocketClass) {
@@ -124,14 +138,15 @@ export class TypstSession {
     }
     const html = includeHtml ? await (await fetch(`http://127.0.0.1:${port}/`)).text() : null;
     this.disconnectPreview();
-    // tinymist checks the Origin a browser would send for its own page, and will require it.
+    // Preview servers check the Origin a browser would send for their own page (tinymist will
+    // require it).
     const init = { headers: { Origin: `http://127.0.0.1:${port}` } };
     const socket = new WebSocketClass(`ws://127.0.0.1:${port}/`, init as unknown as string[]);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
       socket.onopen = () => resolve();
-      socket.onerror = () => reject(new Error("Could not connect to the tinymist preview."));
+      socket.onerror = () => reject(new Error(`Could not connect to the ${this.name} preview.`));
     });
     socket.onerror = null;
     socket.onmessage = (event: MessageEvent) => {
@@ -165,7 +180,7 @@ export class TypstSession {
     this.disconnectPreview();
     if (this.exitReason === null) this.exitReason = "The session was closed.";
     this.wake();
-    // tinymist exits when its input ends; make sure it does.
+    // Language servers exit when their input ends; make sure this one does.
     this.process.stdin.end();
     const killTimer = setTimeout(() => this.process.kill("SIGKILL"), EXIT_GRACE_MS * 2);
     killTimer.unref();
@@ -178,16 +193,8 @@ export class TypstSession {
   }
 
   private fromServer(message: string): void {
-    // The response to tinymist.doStartPreview names the port of the preview server.
-    if (message.includes('"dataPlanePort"')) {
-      try {
-        const port = (JSON.parse(message) as { result?: { dataPlanePort?: unknown } }).result
-          ?.dataPlanePort;
-        if (typeof port === "number") this.previewPorts.add(port);
-      } catch {
-        // Not a message we need to read.
-      }
-    }
+    for (const port of announcedPreviewPorts(this.previewKind, message))
+      this.previewPorts.add(port);
     this.lsp.push(message);
     this.wake();
   }

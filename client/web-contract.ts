@@ -5,26 +5,38 @@ import type { PreviewFrame } from "../shared/rpc";
 // free of DOM types: the panel is type-checked without the DOM library, and the native apps
 // evaluate it.
 
-/** A position as tinymist's preview counts it: zero-based line and character column. */
+/** A zero-based line and a column in characters (code points), as tinymist's preview counts. */
 export interface CharPosition {
   line: number;
   character: number;
 }
 
-export interface TypstEditor {
+export interface CodeEditor {
   setText(text: string): void;
   reveal(start: CharPosition, end?: CharPosition | null): void;
   cursor(): CharPosition;
-  setLanguageClient(client: LanguageClient | null, fileUri: string): void;
+  /** Connects the editor to a language server; null disconnects it. */
+  setLanguageClient(client: LanguageClient | null, file: LanguageClientFile | null): void;
+  /** Requests semantic tokens again, when the server asks. */
+  refreshSemanticTokens(): void;
   format(): void;
   setTheme(theme: PluginTheme): void;
   focus(): void;
   destroy(): void;
 }
 
-export interface TypstEditorOptions {
+export interface LanguageClientFile {
+  uri: string;
+  languageId: string;
+  /** Semantic token types left to the editor's own highlighting. */
+  plainTokenTypes: readonly string[];
+}
+
+export interface CodeEditorOptions {
   /** On web, a React Native `View` ref is its DOM element. */
   parent: unknown;
+  /** A language id from shared/languages.ts, for the editor's own parser and highlighting. */
+  language: string;
   text: string;
   theme: PluginTheme;
   onChange(text: string): void;
@@ -65,12 +77,17 @@ export interface PreviewView {
 }
 
 export interface WebModules {
-  createTypstEditor(options: TypstEditorOptions): TypstEditor;
+  createEditor(options: CodeEditorOptions): CodeEditor;
   createLanguageClient(options: LanguageClientOptions): LanguageClient;
   mountPreview(
     parent: unknown,
     html: string,
     channel: PreviewChannel,
-    options: { invert: boolean; background: string },
+    options: {
+      invert: boolean;
+      background: string;
+      /** The element that holds the rendered document, which inverting recolours. */
+      invertTarget: string;
+    },
   ): PreviewView;
 }

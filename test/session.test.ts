@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { TypstSession } from "../server/session";
+import { EditorSession } from "../server/session";
 
 function tinymistPath(): string | null {
   try {
@@ -15,7 +15,7 @@ function tinymistPath(): string | null {
   }
 }
 
-async function until<T>(session: TypstSession, find: (messages: string[]) => T | undefined) {
+async function until<T>(session: EditorSession, find: (messages: string[]) => T | undefined) {
   const seen: string[] = [];
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const result = await session.poll(2000);
@@ -26,12 +26,19 @@ async function until<T>(session: TypstSession, find: (messages: string[]) => T |
   throw new Error(`Not found in: ${seen.join("\n").slice(0, 2000)}`);
 }
 
-describe.runIf(tinymistPath())("TypstSession with the installed tinymist", () => {
+describe.runIf(tinymistPath())("EditorSession with the installed tinymist", () => {
   it("runs the language server and its preview, and stops it on close", async () => {
     const root = mkdtempSync(join(tmpdir(), "typst-session-"));
     const file = join(root, "main.typ");
     writeFileSync(file, "= Hello\n#lorem(10)\n");
-    const session = new TypstSession({ id: "t", binary: tinymistPath()!, root });
+    const session = new EditorSession({
+      id: "t",
+      binary: tinymistPath()!,
+      args: ["lsp"],
+      name: "tinymist",
+      root,
+      preview: "tinymist",
+    });
     const rpc = (id: number, method: string, params: unknown) =>
       JSON.stringify({ jsonrpc: "2.0", id, method, params });
     session.sendLsp([

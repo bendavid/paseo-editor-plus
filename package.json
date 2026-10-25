@@ -1,11 +1,11 @@
 {
-  "name": "paseo-typst-tinymist",
+  "name": "paseo-editor-plus",
   "private": true,
   "version": "0.1.0",
-  "description": "Edit Typst in Paseo with tinymist: completion, diagnostics, and a live preview that follows the cursor.",
+  "description": "A code editor for Paseo's file tab with language servers and live previews: Typst with tinymist first.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/bendavid/paseo-typst-tinymist.git"
+    "url": "git+https://github.com/bendavid/paseo-editor-plus.git"
   },
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,8 @@
     "@codemirror/search": "6.7.2",
     "@codemirror/state": "6.7.6",
     "@codemirror/view": "6.43.15",
-    "@lezer/highlight": "1.2.5"
+    "@lezer/highlight": "1.2.5",
+    "codemirror-lang-typst": "0.6.0"
   },
   "devDependencies": {
     "@getpaseo/plugin": "^0.13.0",

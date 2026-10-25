@@ -1,7 +1,7 @@
 import type { PreviewFrame } from "../shared/rpc";
 
 // The app's side of a session. Plugin calls are request and response only, so the connection
-// keeps one poll open; the server answers it as soon as tinymist or the preview has something.
+// keeps one poll open; the server answers it as soon as the language server or the preview has something.
 // Messages to the server go out one call at a time so they arrive in order.
 
 /** Long enough to idle cheaply, short enough for the daemon's 30-second call limit. */
@@ -22,10 +22,10 @@ export interface SessionCalls {
 }
 
 export interface ConnectionHandlers {
-  /** A message from tinymist that the editor's language client should see. */
+  /** A message from the language server that the editor's language client should see. */
   lsp(message: string): void;
   preview(frame: PreviewFrame): void;
-  /** The session ended: tinymist exited, or the daemon cannot be reached. */
+  /** The session ended: the language server exited, or the daemon cannot be reached. */
   ended(reason: string): void;
 }
 
@@ -62,7 +62,7 @@ class OrderedSender {
   }
 }
 
-export class TypstConnection {
+export class SessionConnection {
   private running = true;
   private readonly lspOut: OrderedSender;
   private readonly previewOut: OrderedSender;
@@ -75,9 +75,9 @@ export class TypstConnection {
     this.lspOut = new OrderedSender(
       async (messages) => {
         const { alive } = await calls.send({ sessionId, messages });
-        if (!alive) this.end("tinymist is no longer running.");
+        if (!alive) this.end("the language server is no longer running.");
       },
-      (error) => this.end(`Could not reach tinymist: ${messageOf(error)}`),
+      (error) => this.end(`Could not reach the language server: ${messageOf(error)}`),
     );
     this.previewOut = new OrderedSender(
       async (messages) => {
@@ -122,7 +122,7 @@ export class TypstConnection {
       } catch (error) {
         failures += 1;
         if (failures >= MAX_POLL_FAILURES) {
-          this.end(`Lost the connection to tinymist: ${messageOf(error)}`);
+          this.end(`Lost the connection to the language server: ${messageOf(error)}`);
           return;
         }
         await delay(1000 * failures);
@@ -132,7 +132,7 @@ export class TypstConnection {
       for (const message of result.lsp) this.handlers.lsp(message);
       for (const frame of result.preview) this.handlers.preview(frame);
       if (!result.alive) {
-        this.end(result.exit ?? "tinymist stopped.");
+        this.end(result.exit ?? "the language server stopped.");
         return;
       }
     }

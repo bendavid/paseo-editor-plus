@@ -1,8 +1,8 @@
 import type { PreviewFrame } from "../../shared/rpc";
 import type { PreviewChannel, PreviewView } from "../web-contract";
 
-// tinymist's preview page is a self-contained HTML document (renderer and WebAssembly inlined)
-// that talks to its server over a WebSocket. Here it runs in an iframe, and its WebSocket is
+// A preview page, such as tinymist's (a self-contained HTML document with its renderer and
+// WebAssembly inlined), talks to its server over a WebSocket. Here it runs in an iframe, and its WebSocket is
 // replaced by one that travels through Paseo's plugin calls: the plugin server holds the real
 // connection on the daemon host. So the preview works wherever the app reaches the daemon,
 // over SSH or the relay included, without exposing a port.
@@ -17,7 +17,7 @@ interface PreviewSocket {
   serverClosed(): void;
 }
 
-const registry = "__paseoTypstPreviewSockets";
+const registry = "__paseoEditorPlusPreviewSockets";
 let nextId = 0;
 
 function sockets(): Map<string, unknown> {
@@ -39,7 +39,7 @@ export function mountPreview(
   parentElement: unknown,
   html: string,
   channel: PreviewChannel,
-  options: { invert: boolean; background: string },
+  options: { invert: boolean; background: string; invertTarget: string },
 ): PreviewView {
   let socket: PreviewSocket | null = null;
   let serverOpen = true;
@@ -48,7 +48,7 @@ export function mountPreview(
 
   const parent = parentElement as HTMLElement;
   const iframe = document.createElement("iframe");
-  iframe.title = "Typst preview";
+  iframe.title = "Preview";
   Object.assign(iframe.style, { border: "0", width: "100%", height: "100%", display: "block" });
   parent.appendChild(iframe);
   const realm = iframe.contentWindow as Window;
@@ -149,9 +149,9 @@ export function mountPreview(
   const id = String(++nextId);
   sockets().set(id, PaseoPreviewSocket);
   const shim = `<script>window.WebSocket = window.parent.${registry}.get(${JSON.stringify(id)});</script>`;
-  const style = `<style id="paseo-typst-style">
+  const style = `<style id="editor-plus-preview-style">
     html, body { background: ${options.background} !important; }
-    #typst-app.paseo-invert { filter: invert(1) hue-rotate(180deg); }
+    .editor-plus-invert { filter: invert(1) hue-rotate(180deg); }
   </style>`;
   const head = /<head[^>]*>/i.exec(html);
   const page = head
@@ -162,11 +162,12 @@ export function mountPreview(
   doc.write(page);
   doc.close();
 
-  const app = () => doc.getElementById("typst-app");
-  const applyInvert = (invert: boolean) => app()?.classList.toggle("paseo-invert", invert);
+  const content = () => doc.querySelector(options.invertTarget);
+  const applyInvert = (invert: boolean) =>
+    content()?.classList.toggle("editor-plus-invert", invert);
   let invert = options.invert;
   applyInvert(invert);
-  // The page fills #typst-app once it has loaded.
+  // The page builds its content once it has loaded.
   iframe.contentWindow?.addEventListener("load", () => applyInvert(invert));
 
   return {
@@ -186,7 +187,7 @@ export function mountPreview(
       applyInvert(next);
     },
     setBackground(color) {
-      const element = doc.getElementById("paseo-typst-style");
+      const element = doc.getElementById("editor-plus-preview-style");
       if (element) {
         element.textContent = element.textContent.replace(
           /background: [^!]+ !important/,
