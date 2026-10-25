@@ -17,9 +17,10 @@ by a language server on the daemon host, with a live preview beside it where the
     PDF to go to the source);
 - for Typst and LaTeX, a PDF built on every save when switched on in the settings, or with the
   toolbar's **Compile PDF**;
-- spellchecking by the browser's or desktop app's checker, of prose only: text and comments in
-  Typst, LaTeX, and Markdown (on by default), comments in code (off by default), switched per
-  file from the toolbar;
+- spellchecking with [cspell](https://cspell.org), the engine of VS Code's Code Spell Checker, of
+  prose only: text and comments in Typst, LaTeX, and Markdown (on by default), comments in code
+  (off by default), switched per file from the toolbar; right-click or Alt+Enter on an underlined
+  word for suggestions and **Add to dictionary**;
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
@@ -86,6 +87,20 @@ another is found (the plugin's copy is then used instead); the editor asks only 
 They update and remove the plugin's copies. Removing the plugin does not delete them (Paseo gives plugins no uninstall hook); use
 **Remove** first, or delete `plugin-data/editor-plus`.
 
+## Downloads
+
+PDF.js (for the LaTeX preview) and cspell with its dictionaries (for spelling) are downloaded the
+first time they are needed, into `$PASEO_HOME/plugin-data/editor-plus/components/<id>/<version>/`.
+Paseo runs a plugin's server code without a way to find the plugin's own folder
+([#6257](https://github.com/getpaseo/paseo/issues/6257)), so the server can read files only from
+where it can name them. Each installs with `npm ci --omit=dev --omit=optional --ignore-scripts` from
+the lockfile in `server/npm/<id>/`, so it needs npm on the daemon host. They are the plugin's own
+pinned parts, so they install without asking; **Settings › Downloads** lists and removes them.
+
+Words added from the editor go to `plugin-data/editor-plus/spelling/words.txt`. cspell also reads
+the workspace's `cspell.json`, `.cspell.json`, `cspell.config.yaml`, and the like, nearest the
+file, so a project's word list applies as it does in VS Code.
+
 ## How it works
 
 - **One language server per tab.** Opening a tab starts the language's server on the daemon host,
@@ -114,8 +129,8 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
     panel shows it in a shadow root (after removing anything executable) and uses the line marks
     to scroll with the editor and to jump back.
   - **LaTeX:** the panel shows the PDF beside the root document (`% !TEX root = …` names it for
-    an included file) with PDF.js, which the plugin server embeds and serves as the pdfjs-viewer
-    plugin does. It checks the PDF's modification time every 1.5 seconds, reads a new build in
+    an included file) with PDF.js, which the plugin server serves from its download (the app has
+    no URL for it). It checks the PDF's modification time every 1.5 seconds, reads a new build in
     chunks, and swaps it in keeping the reader's place. `synctex view` and `synctex edit` on the
     daemon host map lines to PDF boxes and back.
 - **Building PDFs.** Compile to PDF on save sets tinymist's `exportPdf` to `onSave`, and texlab's
@@ -123,14 +138,16 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
   server when it saves (`textDocument/didSave`), and sends settings both ways servers read them:
   in answer to `workspace/configuration` and with `workspace/didChangeConfiguration`. **Compile
   PDF** runs `tinymist.exportPdf` or texlab's `textDocument/build`.
-- **Spelling is checked by the browser.** CodeMirror turns it off; `client/web/spelling.ts` turns
-  it on for the editor and marks everything that isn't prose `spellcheck="false"`, from the
-  grammar's tree: Typst keeps its `Text` nodes, Markdown and LaTeX keep what the grammar doesn't
-  highlight as code, and code keeps comments. Chromium skips marked spans inside a checked line
-  but ignores checked spans inside an unchecked editor, so the marks exclude code rather than
-  include text. stex reads the arguments of commands such as `\input` and `\label` as text, so
-  the LaTeX profile lists them. Suggestions and **Add to Dictionary** come from the browser's or
-  the desktop app's context menu.
+- **Spelling is checked by cspell on the daemon host, not by the browser.** The browser's
+  spellchecker drops its marks whenever the editor redraws a span, which language-server
+  highlighting and diagnostics do all the time, and checks again only where you type.
+  `client/web/spelling.ts` finds the prose from the grammar's tree: Typst keeps its `Text` nodes,
+  Markdown and LaTeX keep what the grammar doesn't highlight as code, and code keeps comments.
+  stex reads the arguments of commands such as `\input` and `\label` as text, so the LaTeX
+  profile lists them. `client/web/spellchecker.ts` sends the visible words cspell hasn't seen
+  (each word once per editor) and underlines what it flags; cspell picks dictionaries by the
+  file's language and splits compounds such as `usageSumary`. Alt+Enter because Paseo takes
+  Ctrl+. for the sidebar.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
   recompiles from them. The file is saved 500 ms after the last edit, and a change on disk while
   edits are unsaved offers Reload or Overwrite.
@@ -167,31 +184,37 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
   preview treats the open file as the document entry.
 - Building LaTeX needs latexmk and a TeX distribution on the daemon host, and SyncTeX linking needs
   its `synctex` tool. The PDF is expected beside the root document.
-- The spellchecker is the browser's: its languages and dictionary are the browser's or the
-  desktop app's, and it underlines without offering a list of mistakes. LaTeX arguments of
-  commands not in the profile's list are checked as text.
+- Spelling uses cspell's bundled dictionaries: English (US and GB) and its technical word lists.
+  Only the visible part of a file is checked, and there is no list of all mistakes. LaTeX
+  arguments of commands not in the profile's list are checked as text.
+- The first LaTeX preview and the first spellcheck on a host need network access and npm there.
 - The Markdown preview is read-only (no rich editing), and Marp decks show as a scrolling list of
   slides, without presenter mode.
 
 ## Develop
 
 ```sh
-npm install                                # also embeds PDF.js into server/generated/
+npm install
 npm run typecheck
 npm test                                   # the session test runs when tinymist is on PATH
-EDITOR_PLUS_NETWORK_TESTS=1 npx vitest run test/installer.network.test.ts test/servers.network.test.ts
+EDITOR_PLUS_NETWORK_TESTS=1 npx vitest run test/installer.network.test.ts test/servers.network.test.ts test/components.network.test.ts
 npm run format                             # Prettier
 node scripts/update-servers.mjs            # after changing a pinned release
 paseo plugin install "$PWD"
 paseo plugin reload editor-plus            # after changes
 ```
 
-The network tests download every server (several hundred megabytes) into a temporary
-`PASEO_HOME`, run each the way the plugin does, and check it answers an editor session.
+The network tests download every server (several hundred megabytes) and both components into a
+temporary `PASEO_HOME`, and check each works the way the plugin uses it. The other tests use
+`pdfjs-dist` and `cspell-lib` from the dev dependencies in place of the downloads.
 
 `test/plugin-build.test.ts` repeats the dependency walk Paseo's plugin compiler does over type
 declarations, which fails on `declare module` names and outdated paths inside dependencies'
 declarations; `paths` in tsconfig.json maps the ones Marp brings in.
+
+The PDF viewer uses its own PDF.js types (`client/web/pdf/pdfjs-types.ts`): Paseo checks every type
+import against the plugin's installed packages, and `pdfjs-dist` is only a dev dependency.
+`pdfjs-types.check.ts`, which nothing imports, fails the typecheck when they drift from PDF.js.
 
 `client/web/` is the only code that touches the DOM; it is type-checked with `tsconfig.web.json`,
 and the panel reaches it through `client/web-contract.ts`. The rest of the client is type-checked
@@ -208,7 +231,8 @@ it), and evaluates the bundle without a DOM. Server code is type-checked with
 - [CodeMirror](https://codemirror.net), its language packages, and
   [`@codemirror/lsp-client`](https://github.com/codemirror/lsp-client) by Marijn Haverbeke and
   contributors; [codemirror-lang-typst](https://github.com/kxxt/codemirror-lang-typst) by kxxt;
-  [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla; [Marp](https://marp.app) and
+  [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla; [cspell](https://cspell.org) by Street
+  Side Software and contributors; [Marp](https://marp.app) and
   [markdown-it](https://github.com/markdown-it/markdown-it). See
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - The semantic tokens layer follows the approach of

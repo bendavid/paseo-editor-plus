@@ -12,13 +12,18 @@ license texts ship in `node_modules/<package>/LICENSE` after `npm ci`.
 | `marked`                                                                                                                                                                                                                                                                                                                                | MIT        | Christopher Jeffrey and the marked contributors |
 | `codemirror-lang-typst` (its `lezer` entry; the WebAssembly parser is not used)                                                                                                                                                                                                                                                         | Apache-2.0 | kxxt and contributors                           |
 
-The plugin's server code also includes, and sends to the app on web:
+The plugin downloads these on first use into the user's Paseo data folder (see the README's
+Downloads); their license texts are in each package's folder there:
 
-| Package                                                                     | License    | Copyright          |
-| --------------------------------------------------------------------------- | ---------- | ------------------ |
-| `pdfjs-dist` (embedded by `scripts/embed-pdfjs.mjs`, for the LaTeX preview) | Apache-2.0 | Mozilla Foundation |
+| Package                                                                                   | License                              | Copyright                             |
+| ----------------------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------- |
+| `pdfjs-dist` (for the LaTeX preview; its files are sent to the app on web)                | Apache-2.0                           | Mozilla Foundation                    |
+| `cspell-lib` and the `@cspell` packages it depends on, including its bundled dictionaries | MIT, except as below                 | Street Side Software and contributors |
+| `@cspell/dict-en-common-misspellings`                                                     | CC BY-SA 4.0                         | its authors                           |
+| `@cspell/dict-django`                                                                     | WTFPL                                | its authors                           |
+| cspell's other dependencies (`yaml`, `ini`, `smol-toml`, `esprima`, and others)           | MIT, ISC, BSD-2-Clause, BSD-3-Clause | their authors                         |
 
-and renders Markdown on the daemon host with:
+The plugin's server code renders Markdown on the daemon host with:
 
 | Package                                                                        | License      | Copyright                                      |
 | ------------------------------------------------------------------------------ | ------------ | ---------------------------------------------- |
