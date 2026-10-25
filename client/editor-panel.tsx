@@ -37,6 +37,7 @@ import {
   renderMarkdown,
   sendLsp,
   sendPreview,
+  AUTO_SAVE_DEFAULT_MS,
   serverSettings,
   statPdf,
   suggestSpelling,
@@ -58,7 +59,8 @@ import type {
   WebModules,
 } from "./web-contract";
 
-const SAVE_DELAY_MS = 500;
+/** With auto-save off, unsaved edits are kept in the tab's state this long after the last edit. */
+const DRAFT_DELAY_MS = 1000;
 /** Cursor moves sent to the preview at most this often. */
 const SCROLL_INTERVAL_MS = 120;
 
@@ -72,6 +74,11 @@ const savedSchema = z.object({
   preview: z.boolean().optional(),
   /** Invert the preview's colors. Null, from earlier versions, means off. */
   invert: z.boolean().nullable().default(false),
+  /**
+   * Edits not yet saved, with auto-save off: kept with the tab so they survive the panel unmounting
+   * or the app reloading, and dropped with the tab when it closes without saving.
+   */
+  draft: z.string().nullable().optional(),
   /** Check spelling in this file. Unset follows the language (on for prose, off for code). */
   spellcheck: z.boolean().nullable().optional(),
 });
@@ -134,6 +141,14 @@ export function EditorPanel(props: EditorPanelProps) {
     settings.status === "ready" && settings.values.servers[language.id]?.compileOnSave === true;
   const spellcheckRef = useRef(spellcheck);
   spellcheckRef.current = spellcheck;
+  const autoSave = {
+    on: settings.status === "ready" ? settings.values.autoSave : true,
+    delayMs: settings.status === "ready" ? settings.values.autoSaveDelayMs : AUTO_SAVE_DEFAULT_MS,
+  };
+  const autoSaveRef = useRef(autoSave);
+  autoSaveRef.current = autoSave;
+  const setSavedRef = useRef(setSaved);
+  setSavedRef.current = setSaved;
 
   const calls = {
     open: useRpc(openSession),
@@ -174,6 +189,7 @@ export function EditorPanel(props: EditorPanelProps) {
   const text = useRef("");
   const unsaved = useRef<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const draftTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [fileState, setFileState] = useState<FileState>("loading");
   const [fileError, setFileError] = useState<string | null>(null);
   const [editorReady, setEditorReady] = useState(false);
@@ -195,21 +211,59 @@ export function EditorPanel(props: EditorPanelProps) {
   } | null>(null);
   const lastScroll = useRef(0);
 
-  // --- The file: read once, save shortly after edits, follow the disk while nothing is unsaved.
+  // --- The file: read once, save shortly after edits (or on Mod-S with auto-save off), follow the
+  // disk while nothing is unsaved.
 
-  const load = useCallback(async () => {
-    try {
-      text.current = await file.readText();
-    } catch (cause) {
-      setFileError(messageOf(cause));
-      return;
+  /** Keeps unsaved edits with the tab, or forgets them (null). */
+  const storeDraft = useCallback((draft: string | null) => {
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current);
+    draftTimer.current = undefined;
+    if ((savedRef.current.draft ?? null) === draft) return;
+    setSavedRef.current({ ...savedRef.current, draft });
+  }, []);
+
+  const scheduleSave = useCallback(() => {
+    if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
+    saveTimer.current = undefined;
+    if (draftTimer.current !== undefined) clearTimeout(draftTimer.current);
+    if (autoSaveRef.current.on) {
+      saveTimer.current = setTimeout(
+        () => void saveRef.current(false),
+        autoSaveRef.current.delayMs,
+      );
+    } else {
+      draftTimer.current = setTimeout(() => storeDraft(unsaved.current), DRAFT_DELAY_MS);
     }
-    unsaved.current = null;
-    setModified(false);
-    editor.current?.setText(text.current);
-    setFileError(null);
-    setFileState("ready");
-  }, [file, setModified]);
+  }, [storeDraft]);
+
+  /** Reads the file; `restoreDraft` brings back edits the tab kept from before. */
+  const load = useCallback(
+    async (restoreDraft = false) => {
+      let disk: string;
+      try {
+        disk = await file.readText();
+      } catch (cause) {
+        setFileError(messageOf(cause));
+        return;
+      }
+      const draft = restoreDraft ? (savedRef.current.draft ?? null) : null;
+      if (draft !== null && draft !== disk) {
+        text.current = draft;
+        unsaved.current = draft;
+        setModified(true);
+        scheduleSave();
+      } else {
+        text.current = disk;
+        unsaved.current = null;
+        setModified(false);
+        storeDraft(null);
+      }
+      editor.current?.setText(text.current);
+      setFileError(null);
+      setFileState("ready");
+    },
+    [file, scheduleSave, setModified, storeDraft],
+  );
 
   const save = useCallback(
     async (force: boolean) => {
@@ -226,6 +280,7 @@ export function EditorPanel(props: EditorPanelProps) {
       if (unsaved.current === next) {
         unsaved.current = null;
         setModified(false);
+        storeDraft(null);
       }
       setFileError(null);
       setFileState("ready");
@@ -234,13 +289,13 @@ export function EditorPanel(props: EditorPanelProps) {
       current?.client.notify("textDocument/didSave", { textDocument: { uri: current.fileUri } });
       preview.current?.instance?.saved();
     },
-    [file, setModified],
+    [file, setModified, storeDraft],
   );
   const saveRef = useRef(save);
   saveRef.current = save;
 
   useEffect(() => {
-    void load();
+    void load(true);
     const unwatch = file.watch((event) => {
       if (event.type === "deleted") setFileState("deleted");
       else if (unsaved.current === null) void load();
@@ -249,13 +304,23 @@ export function EditorPanel(props: EditorPanelProps) {
     return () => {
       unwatch();
       if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
-      if (unsaved.current !== null) {
+      if (unsaved.current === null) return;
+      if (autoSaveRef.current.on) {
         void file.writeText(unsaved.current).catch((cause) => {
           console.warn(`Unsaved edits to ${file.name} were not written: ${messageOf(cause)}`);
         });
+      } else {
+        // Paseo asks before closing a modified tab, and the panel cannot tell a close from other
+        // unmounts: keep the edits with the tab, which a close without saving discards.
+        storeDraft(unsaved.current);
       }
     };
-  }, [file, load]);
+  }, [file, load, storeDraft]);
+
+  // Turning auto-save on saves what is pending.
+  useEffect(() => {
+    if (autoSave.on && unsaved.current !== null) scheduleSave();
+  }, [autoSave.on, scheduleSave]);
 
   // --- The preview, inside this panel.
 
@@ -357,8 +422,12 @@ export function EditorPanel(props: EditorPanelProps) {
         unsaved.current = next;
         setModified(true);
         preview.current?.instance?.textChanged();
+        scheduleSave();
+      },
+      onSave: () => {
         if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => void saveRef.current(false), SAVE_DELAY_MS);
+        saveTimer.current = undefined;
+        void saveRef.current(false);
       },
       onCursor: (position, pointer) => {
         if (!pointer) return;
@@ -370,7 +439,7 @@ export function EditorPanel(props: EditorPanelProps) {
     });
     setEditorReady(true);
     // Mounts once; theme changes go through setTheme below.
-  }, [fileState, language.id, scrollPreview, setModified, web]);
+  }, [fileState, language.id, scheduleSave, scrollPreview, setModified, web]);
 
   useEffect(
     () => () => {
@@ -516,11 +585,8 @@ export function EditorPanel(props: EditorPanelProps) {
 
   const setView = useCallback(
     (next: ViewMode) =>
-      setSaved({
-        view: next,
-        invert: savedRef.current.invert,
-        spellcheck: savedRef.current.spellcheck,
-      }),
+      // Drops `preview`, the setting the view mode replaced.
+      setSaved({ ...savedRef.current, view: next, preview: undefined }),
     [setSaved],
   );
   const toggleInvert = useCallback(() => {
@@ -535,7 +601,7 @@ export function EditorPanel(props: EditorPanelProps) {
   }, [scrollPreview]);
   const format = useCallback(() => editor.current?.format(), []);
   const restart = useCallback(() => setRestarts((count) => count + 1), []);
-  const reload = useCallback(() => void load(), [load]);
+  const reload = useCallback(() => void load(false), [load]);
   const overwrite = useCallback(() => void save(true), [save]);
 
   const setViewRef = useRef(setView);

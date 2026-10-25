@@ -17,7 +17,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Text } from "react-native";
 import { LANGUAGES, type LanguageProfile } from "../shared/languages";
 import { COMPONENTS, type ComponentId } from "../shared/components";
-import { componentStatusRpc, removeComponent, serverSettings } from "../shared/rpc";
+import {
+  AUTO_SAVE_MAX_MS,
+  AUTO_SAVE_MIN_MS,
+  componentStatusRpc,
+  removeComponent,
+  serverSettings,
+} from "../shared/rpc";
 import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 
 type ReadySettings = Extract<SettingsState<typeof serverSettings.schema>, { status: "ready" }>;
@@ -48,6 +54,7 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
   }
   return (
     <>
+      <EditorSection settings={settings} />
       {LANGUAGES.map((language) => (
         <ServerSection key={language.id} language={language} settings={settings} theme={theme} />
       ))}
@@ -80,7 +87,10 @@ function ServerSection({
   const entry = settings.values.servers[language.id] ?? { path: "", compileOnSave: false };
   const update = (change: Partial<typeof entry>) =>
     void settings.save(
-      { servers: { ...settings.values.servers, [language.id]: { ...entry, ...change } } },
+      {
+        ...settings.values,
+        servers: { ...settings.values.servers, [language.id]: { ...entry, ...change } },
+      },
       settings.revision,
     );
 
@@ -90,7 +100,7 @@ function ServerSection({
       ...settings.values.servers,
       [language.id]: { ...entry, path: draft.trim() },
     };
-    if (await settings.save({ servers }, settings.revision)) {
+    if (await settings.save({ ...settings.values, servers }, settings.revision)) {
       setDraft(null);
       void refresh();
     }
@@ -240,5 +250,56 @@ function ComponentRow({ id }: { id: ComponentId }) {
       }
       error={error ?? (status?.state === "failed" ? status.error : null)}
     />
+  );
+}
+
+/** Saving: automatically after a delay, as Paseo's own editor does, or with Ctrl/Cmd+S. */
+function EditorSection({ settings }: { settings: ReadySettings }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const delay = draft === null ? null : Number(draft.trim());
+  const valid =
+    delay !== null &&
+    Number.isInteger(delay) &&
+    delay >= AUTO_SAVE_MIN_MS &&
+    delay <= AUTO_SAVE_MAX_MS;
+  const saveDelay = async () => {
+    if (!valid || delay === null) return;
+    if (await settings.save({ ...settings.values, autoSaveDelayMs: delay }, settings.revision)) {
+      setDraft(null);
+    }
+  };
+  return (
+    <SettingsSection title="Editor">
+      <SettingsCard>
+        <SettingsSwitch
+          label="Save automatically"
+          hint="Saves each file shortly after you stop typing, as Paseo's own editor does. When off, Ctrl/Cmd+S saves, and unsaved edits stay with the tab until you save or close it."
+          value={settings.values.autoSave}
+          disabled={settings.saving}
+          onValueChange={(autoSave) =>
+            void settings.save({ ...settings.values, autoSave }, settings.revision)
+          }
+        />
+        <SettingsInput
+          label="Auto-save delay (ms)"
+          hint={`How long after the last edit to save; ${AUTO_SAVE_MIN_MS} to ${AUTO_SAVE_MAX_MS}. Paseo's editor uses 800.`}
+          placeholder="800"
+          initialValue={String(settings.values.autoSaveDelayMs)}
+          onChangeText={setDraft}
+          disabled={!settings.values.autoSave}
+          error={
+            draft !== null && !valid
+              ? `Enter a whole number from ${AUTO_SAVE_MIN_MS} to ${AUTO_SAVE_MAX_MS}.`
+              : null
+          }
+        />
+        <SettingsAction
+          label="Use this delay"
+          actionLabel={settings.saving ? "Saving…" : "Save"}
+          disabled={!valid || settings.saving || !settings.values.autoSave}
+          onPress={() => void saveDelay()}
+        />
+      </SettingsCard>
+    </SettingsSection>
   );
 }

@@ -242,6 +242,14 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
         language.support(options.extension),
         EditorView.lineWrapping,
         keymap.of([
+          {
+            key: "Mod-s",
+            preventDefault: true,
+            run: () => {
+              options.onSave();
+              return true;
+            },
+          },
           ...closeBracketsKeymap,
           ...defaultKeymap,
           ...searchKeymap,

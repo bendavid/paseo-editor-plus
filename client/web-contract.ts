@@ -59,6 +59,8 @@ export interface CodeEditorOptions {
   spellcheck: boolean;
   spelling: SpellingService;
   onChange(text: string): void;
+  /** Mod-S: save now. */
+  onSave(): void;
   /** `pointer` is true when a click or drag moved the cursor. */
   onCursor(position: CharPosition, pointer: boolean): void;
 }

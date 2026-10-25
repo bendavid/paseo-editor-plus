@@ -5,11 +5,24 @@ import { z } from "zod";
 // the queues that carry their messages to the app. Plugin calls cannot push, so the app holds a
 // poll open and the server answers it as soon as anything arrives.
 
+/** Paseo's own editor saves this long after the last edit. */
+export const AUTO_SAVE_DEFAULT_MS = 800;
+export const AUTO_SAVE_MIN_MS = 100;
+export const AUTO_SAVE_MAX_MS = 60_000;
+
 export const serverSettings = defineSettings({
   id: "servers",
   scope: "host",
   version: 1,
   schema: z.object({
+    /** Save each file shortly after the last edit; when off, Mod-S saves. */
+    autoSave: z.boolean().default(true),
+    autoSaveDelayMs: z
+      .number()
+      .int()
+      .min(AUTO_SAVE_MIN_MS)
+      .max(AUTO_SAVE_MAX_MS)
+      .default(AUTO_SAVE_DEFAULT_MS),
     /** Per language id: the server's absolute path, empty to find it on the daemon host. */
     servers: z
       .record(
