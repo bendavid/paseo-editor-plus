@@ -23,7 +23,7 @@ import { proseWords, type SpellingRules, type Word } from "./spelling";
 // The spellchecker: the words of the visible prose go to cspell on the daemon host, and the
 // misspelled parts are underlined with the editor's own decorations, which survive the redraws
 // that lose the browser's marks. Each word is asked about once per editor; typing sends only new
-// words. Right-click or Mod-. on an underlined word offers cspell's suggestions and
+// words. Right-click or Alt+Enter on an underlined word offers cspell's suggestions and
 // "Add to dictionary".
 
 /** How long after typing or scrolling the new words are sent. */
@@ -355,7 +355,8 @@ export function spellchecker(rules: SpellingRules, service: SpellingService): Ex
       },
     }),
     keymap.of([
-      { key: "Mod-.", run: (view) => openAt(view, view.state.selection.main.head) },
+      // Paseo takes Ctrl+. (the sidebar), so the quick-fix key is JetBrains' Alt+Enter.
+      { key: "Alt-Enter", run: (view) => openAt(view, view.state.selection.main.head) },
       {
         key: "Escape",
         run: (view) => {
