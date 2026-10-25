@@ -96,6 +96,24 @@ function unresolvedTypeImports(entry: string): string[] {
 }
 
 describe("Paseo's plugin build", () => {
+  it("maps paths only to files a production install has", () => {
+    const tsconfig = ts.readConfigFile(join(root, "tsconfig.json"), ts.sys.readFile).config as {
+      compilerOptions: { paths?: Record<string, string[]> };
+    };
+    const { devDependencies = {} } = JSON.parse(
+      readFileSync(join(root, "package.json"), "utf8"),
+    ) as {
+      devDependencies?: Record<string, string>;
+    };
+    for (const targets of Object.values(tsconfig.compilerOptions.paths ?? {})) {
+      for (const target of targets) {
+        const name = /node_modules\/((?:@[^/]+\/)?[^/]+)/.exec(target)?.[1];
+        // npm ci --omit=dev on the daemon leaves devDependencies out.
+        if (name) expect(devDependencies, target).not.toHaveProperty([name]);
+      }
+    }
+  });
+
   it("resolves every type import in the server bundle's dependencies", () => {
     expect(unresolvedTypeImports("index.server.ts")).toEqual([]);
   }, 120_000);

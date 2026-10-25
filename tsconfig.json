@@ -18,7 +18,7 @@
     "paths": {
       "highlight.js/private": ["./node_modules/highlight.js/types/index.d.ts"],
       // markdown-it-front-matter (through Marp) still names markdown-it 12's layout.
-      "markdown-it/lib": ["./node_modules/@types/markdown-it/index.d.ts"]
+      "markdown-it/lib": ["./server/types/markdown-it-lib.d.ts"]
     }
   },
   "include": ["index.client.tsx", "client/**/*.ts", "client/**/*.tsx", "shared/**/*.ts"],
