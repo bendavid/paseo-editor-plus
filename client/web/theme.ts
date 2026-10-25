@@ -21,6 +21,8 @@ interface Palette {
   math: string;
   muted: string;
   error: string;
+  /** Links in hover documentation. */
+  link: string;
 }
 
 const LIGHT: Palette = {
@@ -35,6 +37,7 @@ const LIGHT: Palette = {
   math: "#be185d",
   muted: "#64748b",
   error: "#dc2626",
+  link: "#1d4ed8",
 };
 
 const DARK: Palette = {
@@ -49,6 +52,7 @@ const DARK: Palette = {
   math: "#f07178",
   muted: "#94a3b8",
   error: "#ff5370",
+  link: "#8ab4ff",
 };
 
 function palette(theme: PluginTheme): Palette {
@@ -116,6 +120,7 @@ export const EDITOR_FONT_SIZE_PX = 13;
 export function editorTheme(theme: PluginTheme, language: LanguageTags): Extension {
   const { colors } = theme;
   const c = palette(theme);
+  const dark = isDark(theme);
   return [
     EditorView.theme(
       {
@@ -146,11 +151,12 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
         },
         ".cm-activeLineGutter": { backgroundColor: colors.surface1 },
         // As specific as CodeMirror's own rules, which otherwise win with a near-invisible grey.
+        // Stronger on dark backgrounds, where a translucent accent barely shows.
         "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, ::selection": {
-          backgroundColor: `color-mix(in srgb, ${colors.accent} 35%, transparent)`,
+          backgroundColor: `color-mix(in srgb, ${colors.accent} ${dark ? 60 : 35}%, transparent)`,
         },
         "& > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
-          backgroundColor: `color-mix(in srgb, ${colors.accent} 22%, transparent)`,
+          backgroundColor: `color-mix(in srgb, ${colors.accent} ${dark ? 38 : 22}%, transparent)`,
         },
         // Tooltips sit over the code: a raised surface, a firm border, and a shadow set them apart.
         ".cm-tooltip": {
@@ -160,9 +166,7 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           color: colors.foreground,
           border: `1px solid color-mix(in srgb, ${colors.foreground} 22%, ${colors.surface2})`,
           borderRadius: "6px",
-          boxShadow: isDark(theme)
-            ? "0 8px 24px rgba(0, 0, 0, 0.55)"
-            : "0 8px 24px rgba(0, 0, 0, 0.16)",
+          boxShadow: dark ? "0 8px 24px rgba(0, 0, 0, 0.55)" : "0 8px 24px rgba(0, 0, 0, 0.16)",
         },
         // Hover documentation can be long: cap it and let it scroll. CodeMirror also shrinks a
         // tooltip to the space left in the window, which without this cut its content off.
@@ -182,6 +186,9 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           borderRadius: "4px",
           backgroundColor: colors.surface1,
         },
+        // Documentation links take the browser's default blue otherwise, unreadable when dark.
+        ".cm-tooltip a, .cm-tooltip a:visited": { color: c.link, textDecoration: "underline" },
+        ".cm-tooltip a:hover": { textDecoration: "none" },
         ".cm-lsp-documentation hr": {
           border: "none",
           borderTop: `1px solid color-mix(in srgb, ${colors.foreground} 18%, ${colors.surface2})`,
@@ -199,7 +206,7 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
         // Code in documentation a touch smaller than its prose, as in the editor's own font.
         ".cm-lsp-documentation code, .cm-lsp-documentation pre": { fontSize: "0.92em" },
       },
-      { dark: isDark(theme) },
+      { dark },
     ),
     syntaxHighlighting(
       highlightStyle(
