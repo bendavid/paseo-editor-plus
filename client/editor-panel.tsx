@@ -141,8 +141,9 @@ export function EditorPanel(props: EditorPanelProps) {
     settings.status === "ready" && settings.values.servers[language.id]?.compileOnSave === true;
   const spellcheckRef = useRef(spellcheck);
   spellcheckRef.current = spellcheck;
+  // Unknown (null) until the settings load: a draft restored meanwhile must not be saved.
   const autoSave = {
-    on: settings.status === "ready" ? settings.values.autoSave : true,
+    on: settings.status === "ready" ? settings.values.autoSave : null,
     delayMs: settings.status === "ready" ? settings.values.autoSaveDelayMs : AUTO_SAVE_DEFAULT_MS,
   };
   const autoSaveRef = useRef(autoSave);
@@ -226,12 +227,13 @@ export function EditorPanel(props: EditorPanelProps) {
     if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
     saveTimer.current = undefined;
     if (draftTimer.current !== undefined) clearTimeout(draftTimer.current);
-    if (autoSaveRef.current.on) {
+    if (autoSaveRef.current.on === true) {
       saveTimer.current = setTimeout(
         () => void saveRef.current(false),
         autoSaveRef.current.delayMs,
       );
     } else {
+      // Off, or not known yet: keep the edits with the tab until it is.
       draftTimer.current = setTimeout(() => storeDraft(unsaved.current), DRAFT_DELAY_MS);
     }
   }, [storeDraft]);
@@ -305,7 +307,7 @@ export function EditorPanel(props: EditorPanelProps) {
       unwatch();
       if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
       if (unsaved.current === null) return;
-      if (autoSaveRef.current.on) {
+      if (autoSaveRef.current.on === true) {
         void file.writeText(unsaved.current).catch((cause) => {
           console.warn(`Unsaved edits to ${file.name} were not written: ${messageOf(cause)}`);
         });
@@ -317,9 +319,9 @@ export function EditorPanel(props: EditorPanelProps) {
     };
   }, [file, load, storeDraft]);
 
-  // Turning auto-save on saves what is pending.
+  // Turning auto-save on, or learning that it is, saves what is pending.
   useEffect(() => {
-    if (autoSave.on && unsaved.current !== null) scheduleSave();
+    if (autoSave.on === true && unsaved.current !== null) scheduleSave();
   }, [autoSave.on, scheduleSave]);
 
   // --- The preview, inside this panel.
