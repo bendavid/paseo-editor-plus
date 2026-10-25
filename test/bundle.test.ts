@@ -34,7 +34,10 @@ async function compileClient(): Promise<string> {
 
 describe("client bundle", () => {
   it("contains no import() syntax, which stops Hermes from parsing it on iOS and Android", async () => {
-    expect(await compileClient()).not.toMatch(/\bimport\s*\(/);
+    // The PDF.js loader builds its one import() from a string at runtime, which Hermes never
+    // parses as code.
+    const bundle = (await compileClient()).replaceAll('"return import(url)"', '""');
+    expect(bundle).not.toMatch(/\bimport\s*\(/);
   });
 
   it("evaluates without a DOM, as the native apps do, and registers the panel", async () => {

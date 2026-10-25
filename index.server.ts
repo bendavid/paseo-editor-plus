@@ -1,10 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { findServer, ServerNotFoundError } from "./server/discovery";
 import { Installer, planInstall } from "./server/installer";
+import {
+  latexRoot,
+  pdfFor,
+  synctexForward as forward,
+  synctexInverse as inverse,
+} from "./server/latex";
+import { renderMarkdown as render } from "./server/markdown";
+import { binaryDataBase64, type PdfjsAssets, runtimePartSource } from "./server/pdfjs-assets";
+import {
+  binary as pdfjsBinaryData,
+  pdfjsVersion,
+  runtime as pdfjsRuntime,
+} from "./server/generated/pdfjs-assets.js";
 import { EditorSession } from "./server/session";
 import { type LanguageProfile, languageById } from "./shared/languages";
 import {
@@ -15,7 +28,15 @@ import {
   sendLsp,
   sendPreview,
   installServer,
+  locatePdf,
+  pdfjsBinary,
+  pdfjsPart,
+  readPdf,
   removeServer,
+  renderMarkdown,
+  statPdf,
+  synctexForward,
+  synctexInverse,
   serverSettings,
   serverStatus,
 } from "./shared/rpc";
@@ -24,6 +45,14 @@ import {
 const ABANDONED_MS = 90_000;
 /** Each session is a language server process; this bounds what a misbehaving client can start. */
 const MAX_SESSIONS = 24;
+/** Bytes of PDF per call: base64 makes it a third bigger, still far under the relay's limit. */
+const PDF_CHUNK = 3 * 1024 * 1024;
+
+const pdfjs: PdfjsAssets = {
+  version: pdfjsVersion,
+  runtime: pdfjsRuntime,
+  binary: pdfjsBinaryData,
+};
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
@@ -190,6 +219,62 @@ export default function contribute(server: PluginServerContext) {
       return { ...extras, path: null, version: null, source: null, error: message };
     }
   });
+
+  // --- Previews rendered or built on this host.
+
+  server.handle(renderMarkdown, ({ file, text }) => render(file, text));
+
+  server.handle(locatePdf, async ({ file }) => {
+    const root = await latexRoot(file);
+    return { root, pdf: pdfFor(root) };
+  });
+
+  server.handle(statPdf, async ({ path }) => {
+    try {
+      const info = await stat(path);
+      return { exists: info.isFile(), mtimeMs: info.mtimeMs, size: info.size };
+    } catch {
+      return { exists: false, mtimeMs: 0, size: 0 };
+    }
+  });
+
+  server.handle(readPdf, async ({ path, offset }) => {
+    const handle = await open(path, "r");
+    try {
+      const info = await handle.stat();
+      const length = Math.max(0, Math.min(PDF_CHUNK, info.size - offset));
+      const buffer = Buffer.alloc(length);
+      if (length > 0) await handle.read(buffer, 0, length, offset);
+      return { data: buffer.toString("base64"), total: info.size, mtimeMs: info.mtimeMs };
+    } finally {
+      await handle.close();
+    }
+  });
+
+  server.handle(synctexForward, async ({ pdf, file, line, column }) => {
+    const synctex = await tool("synctex");
+    if (!synctex) return { boxes: [], error: "synctex was not found on the daemon host." };
+    try {
+      return { boxes: await forward(synctex, pdf, file, line, column), error: null };
+    } catch (error) {
+      return { boxes: [], error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  server.handle(synctexInverse, async ({ pdf, page, x, y }) => {
+    const empty = { file: null, line: null, column: null };
+    const synctex = await tool("synctex");
+    if (!synctex) return { ...empty, error: "synctex was not found on the daemon host." };
+    try {
+      const found = await inverse(synctex, pdf, page, x, y);
+      return found ? { ...found, error: null } : { ...empty, error: null };
+    } catch (error) {
+      return { ...empty, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  server.handle(pdfjsPart, ({ part }) => runtimePartSource(pdfjs, part));
+  server.handle(pdfjsBinary, ({ kind, filename }) => binaryDataBase64(pdfjs, kind, filename));
 
   server.handle(installServer, async ({ language: languageId }) => {
     const language = languageById(languageId);

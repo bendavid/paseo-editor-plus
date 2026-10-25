@@ -101,18 +101,50 @@ describe("tinymist preview provider", () => {
     expect(tinymistPreview.sourceJump("textDocument/publishDiagnostics", {})).toBeNull();
   });
 
-  it("starts the preview through the language server and reports its port", async () => {
-    const calls: [string, unknown[]][] = [];
-    const context = {
+  it("starts the preview through the language server and connects to its port", async () => {
+    const requests: [string, unknown][] = [];
+    const connects: unknown[] = [];
+    const views: string[] = [];
+    const services = {
       filePath: "/w/main.typ",
-      command: async (name: string, args: unknown[]) => {
-        calls.push([name, args]);
-        return { dataPlanePort: 4321 };
+      text: () => "",
+      client: {
+        initializing: Promise.resolve(),
+        request: async (method: string, params: unknown) => {
+          requests.push([method, params]);
+          return { dataPlanePort: 4321 };
+        },
+        notify() {},
+        disconnect() {},
       },
-    };
-    const { port, task } = await tinymistPreview.start(context);
-    expect(port).toBe(4321);
-    expect(calls[0][0]).toBe("tinymist.doStartPreview");
-    expect(calls[0][1]).toEqual([expect.arrayContaining(["--task-id", task, "/w/main.typ"])]);
+      session: { id: "s1", sendPreview() {} },
+      calls: {
+        connectPreview: async (input: unknown) => {
+          connects.push(input);
+          return { html: "<html><head></head></html>" };
+        },
+      },
+      web: {
+        mountPreview: (_parent: unknown, html: string) => {
+          views.push(html);
+          return { deliver() {}, setInvert() {}, setBackground() {}, destroy() {} };
+        },
+      },
+      parent: null,
+      theme: { colors: { surface1: "#fff" } },
+      invert: false,
+      jump() {},
+      openExternal() {},
+      notice() {},
+    } as unknown as Parameters<typeof tinymistPreview.start>[0];
+    const preview = await tinymistPreview.start(services);
+    const [method, params] = requests[0] as [string, { command: string; arguments: string[][] }];
+    expect(method).toBe("workspace/executeCommand");
+    expect(params.command).toBe("tinymist.doStartPreview");
+    expect(params.arguments[0]).toEqual(expect.arrayContaining(["--task-id", "/w/main.typ"]));
+    expect(connects).toEqual([{ sessionId: "s1", port: 4321, includeHtml: true }]);
+    expect(views).toHaveLength(1);
+    preview.destroy();
+    expect((requests.at(-1)![1] as { command: string }).command).toBe("tinymist.doKillPreview");
   });
 });

@@ -3,7 +3,8 @@ import type { PreviewProvider } from "./types";
 // tinymist's preview, started by its language server. See tinymist's editors/vscode for the
 // reference client: `tinymist.doStartPreview` returns the data plane port, the editor reports
 // cursor positions with `tinymist.scrollPreview`, and clicks in the preview come back as
-// `tinymist/preview/scrollSource` once `customizedShowDocument` is set.
+// `tinymist/preview/scrollSource` once `customizedShowDocument` is set. The page and its
+// WebSocket travel through the session (see client/web/preview.ts).
 
 interface ScrollSource {
   filepath: string;
@@ -12,9 +13,13 @@ interface ScrollSource {
 }
 
 export const tinymistPreview: PreviewProvider = {
-  invertTarget: "#typst-app",
+  needsServer: true,
 
-  async start({ command, filePath }) {
+  async start(services) {
+    const { client, session, filePath, calls, web } = services;
+    if (!client || !session) throw new Error("tinymist is not running.");
+    const command = (name: string, args: unknown[]) =>
+      client.request("workspace/executeCommand", { command: name, arguments: args });
     const task = `paseo-${Math.random().toString(36).slice(2, 10)}`;
     const started = (await command("tinymist.doStartPreview", [
       [
@@ -22,7 +27,7 @@ export const tinymistPreview: PreviewProvider = {
         task,
         "--data-plane-host",
         "127.0.0.1:0",
-        // The panel inverts colours itself, following the app's theme.
+        // The panel inverts colours itself.
         "--invert-colors=never",
         "--partial-rendering=true",
         "--no-open",
@@ -31,19 +36,51 @@ export const tinymistPreview: PreviewProvider = {
     ])) as { dataPlanePort?: number } | null;
     const port = started?.dataPlanePort;
     if (!port) throw new Error("tinymist did not start a preview.");
-    return { task, port };
-  },
-
-  async stop({ command }, task) {
-    await command("tinymist.doKillPreview", [task]);
-  },
-
-  async reveal({ command, filePath }, task, position) {
-    await command("tinymist.scrollPreview", [
-      task,
-      // tinymist's preview counts columns in characters, as the editor's positions do.
-      { event: "panelScrollTo", filepath: filePath, ...position },
-    ]);
+    const stop = () => void command("tinymist.doKillPreview", [task]).catch(() => {});
+    let html: string | null;
+    try {
+      ({ html } = await calls.connectPreview({ sessionId: session.id, port, includeHtml: true }));
+    } catch (error) {
+      stop();
+      throw error;
+    }
+    if (!html) {
+      stop();
+      throw new Error("tinymist's preview page is empty.");
+    }
+    const view = web.mountPreview(
+      services.parent,
+      html,
+      {
+        reconnect: async () => {
+          await calls.connectPreview({ sessionId: session.id, port, includeHtml: false });
+        },
+        send: (message) => session.sendPreview(message),
+      },
+      {
+        invert: services.invert,
+        background: services.theme.colors.surface1,
+        invertTarget: "#typst-app",
+      },
+    );
+    return {
+      deliver: (frame) => view.deliver(frame),
+      reveal(position) {
+        void command("tinymist.scrollPreview", [
+          task,
+          // tinymist's preview counts columns in characters, as the editor's positions do.
+          { event: "panelScrollTo", filepath: filePath, ...position },
+        ]).catch(() => {});
+      },
+      textChanged() {},
+      saved() {},
+      setInvert: (invert) => view.setInvert(invert),
+      setTheme: (theme) => view.setBackground(theme.colors.surface1),
+      destroy() {
+        view.destroy();
+        stop();
+      },
+    };
   },
 
   sourceJump(method, params) {

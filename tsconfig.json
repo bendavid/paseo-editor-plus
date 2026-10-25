@@ -10,7 +10,16 @@
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    // Paseo's plugin compiler checks the declarations of imported packages by resolving files, so
+    // it misses modules declared with `declare module`, such as highlight.js's own
+    // "highlight.js/private" (reached through Marp), and fails on outdated paths in dependencies'
+    // declarations. Point them at files that declare them.
+    "paths": {
+      "highlight.js/private": ["./node_modules/highlight.js/types/index.d.ts"],
+      // markdown-it-front-matter (through Marp) still names markdown-it 12's layout.
+      "markdown-it/lib": ["./node_modules/@types/markdown-it/index.d.ts"]
+    }
   },
   "include": ["index.client.tsx", "client/**/*.ts", "client/**/*.tsx", "shared/**/*.ts"],
   "exclude": ["node_modules", "client/web/**"]

@@ -151,6 +151,16 @@ export function createLanguageClient(options: LanguageClientOptions): LanguageCl
       signatureHelp(),
       serverDiagnostics(),
       { clientCapabilities: SEMANTIC_TOKENS_CAPABILITY },
+      // Servers such as texlab read their settings only by asking (workspace/configuration) or
+      // when told (workspace/didChangeConfiguration), not from initializationOptions.
+      {
+        clientCapabilities: {
+          workspace: {
+            configuration: true,
+            didChangeConfiguration: { dynamicRegistration: false },
+          },
+        },
+      },
       {
         editorExtension: keymap.of([
           ...formatKeymap,
@@ -161,7 +171,16 @@ export function createLanguageClient(options: LanguageClientOptions): LanguageCl
       },
     ],
   });
-  return client.connect(options.transport as Transport);
+  client.connect(options.transport as Transport);
+  return {
+    get initializing() {
+      return client.initializing;
+    },
+    request: (method, params) => client.request(method, params),
+    notify: (method, params) => client.notification(method, params),
+    disconnect: () => client.disconnect(),
+    lsp: client,
+  } as LanguageClient & { lsp: LSPClient };
 }
 
 /** Sends edits to the server soon after typing, so a preview keeps up. */
@@ -269,7 +288,7 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
       return charPosition(view.state, view.state.selection.main.head);
     },
     setLanguageClient(client, file: LanguageClientFile | null) {
-      const lsp = client as LSPClient | null;
+      const lsp = (client as (LanguageClient & { lsp: LSPClient }) | null)?.lsp ?? null;
       view.dispatch({
         effects: lspSlot.reconfigure(
           lsp && file

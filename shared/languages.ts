@@ -3,7 +3,7 @@
 // CodeMirror support in client/web/languages/, its server in shared/servers.ts (to offer an
 // install), and, for a new kind of preview, a provider in client/previews/ and server/previews/.
 
-export type PreviewKind = "tinymist";
+export type PreviewKind = "tinymist" | "markdown" | "latex-pdf";
 
 export interface LanguageServer {
   /** The executable searched for on the daemon host. */
@@ -20,6 +20,21 @@ export interface LanguageServer {
   configSection: string;
 }
 
+export interface CompileSupport {
+  /** Server settings that turn building on save on or off; merged into `server.options`. */
+  onSave(enabled: boolean): Record<string, unknown>;
+  /** How to build now: a workspace command with the file's path, or a request with its URI. */
+  now: { kind: "command"; command: string } | { kind: "request"; method: string };
+}
+
+/** Server settings with building on save switched as the user chose. */
+export function serverOptions(
+  language: LanguageProfile,
+  compileOnSave: boolean,
+): Record<string, unknown> {
+  return { ...language.server.options, ...(language.compile?.onSave(compileOnSave) ?? {}) };
+}
+
 export interface LanguageProfile {
   /** Stable: names the file panel, the tab state, and the settings entry. */
   id: string;
@@ -30,6 +45,8 @@ export interface LanguageProfile {
   icon: string;
   server: LanguageServer;
   preview: PreviewKind | null;
+  /** Building a PDF, for languages that make one: on every save, or on demand. */
+  compile: CompileSupport | null;
   /**
    * Semantic token types the editor leaves to its own highlighting: the server's version of them
    * arrives a round trip late and lingers while typing.
@@ -67,6 +84,10 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       },
     },
     preview: "tinymist",
+    compile: {
+      onSave: (enabled) => ({ exportPdf: enabled ? "onSave" : "never" }),
+      now: { kind: "command", command: "tinymist.exportPdf" },
+    },
     plainTokenTypes: ["text", "comment", "punct", "delim"],
   },
   {
@@ -84,6 +105,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: {},
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -101,6 +123,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: {},
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -119,6 +142,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: { semanticTokens: true },
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -145,6 +169,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: {},
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -171,6 +196,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: {},
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -187,7 +213,19 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       configSection: "texlab",
       options: {},
     },
-    preview: null,
+    preview: "latex-pdf",
+    compile: {
+      // latexmk beside the root document, with SyncTeX for the preview's linking.
+      onSave: (enabled) => ({
+        build: {
+          onSave: enabled,
+          executable: "latexmk",
+          args: ["-pdf", "-interaction=nonstopmode", "-synctex=1", "%f"],
+          forwardSearchAfter: false,
+        },
+      }),
+      now: { kind: "request", method: "textDocument/build" },
+    },
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -204,7 +242,8 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       configSection: "marksman",
       options: {},
     },
-    preview: null,
+    preview: "markdown",
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -221,6 +260,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: { provideFormatter: true },
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -237,6 +277,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: { provideFormatter: true },
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
   {
@@ -253,6 +294,7 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       options: { provideFormatter: true, embeddedLanguages: { css: true, javascript: true } },
     },
     preview: null,
+    compile: null,
     plainTokenTypes: CODE_PLAIN,
   },
 ];

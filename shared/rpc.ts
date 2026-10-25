@@ -11,7 +11,16 @@ export const serverSettings = defineSettings({
   version: 1,
   schema: z.object({
     /** Per language id: the server's absolute path, empty to find it on the daemon host. */
-    servers: z.record(z.string(), z.object({ path: z.string().default("") })).default({}),
+    servers: z
+      .record(
+        z.string(),
+        z.object({
+          path: z.string().default(""),
+          /** For languages that build a PDF (Typst, LaTeX): build it whenever the file is saved. */
+          compileOnSave: z.boolean().default(false),
+        }),
+      )
+      .default({}),
   }),
 });
 
@@ -148,4 +157,92 @@ export const removeServer = defineRpc({
   name: "editorplus.server.remove",
   input: z.object({ language: languageId }),
   output: z.object({}),
+});
+
+// --- Previews rendered or built on the daemon host.
+
+/** Markdown rendered to HTML on the daemon host: plain Markdown, or a Marp slide deck. */
+export const renderMarkdown = defineRpc({
+  name: "editorplus.render.markdown",
+  input: z.object({ file: z.string().min(1).max(4096), text: z.string().max(8_000_000) }),
+  output: z.object({ kind: z.enum(["markdown", "marp"]), html: z.string(), css: z.string() }),
+});
+
+/** The PDF a LaTeX file builds: its own, or its root document's (`% !TEX root = ...`). */
+export const locatePdf = defineRpc({
+  name: "editorplus.pdf.locate",
+  input: z.object({ file: z.string().min(1).max(4096) }),
+  output: z.object({ root: z.string(), pdf: z.string() }),
+});
+
+const pdfPath = z
+  .string()
+  .min(5)
+  .max(4096)
+  .regex(/\.pdf$/i);
+
+export const statPdf = defineRpc({
+  name: "editorplus.pdf.stat",
+  input: z.object({ path: pdfPath }),
+  output: z.object({ exists: z.boolean(), mtimeMs: z.number(), size: z.number() }),
+});
+
+/** A built PDF, in base64 chunks: one call stays well under the relay's message limit. */
+export const readPdf = defineRpc({
+  name: "editorplus.pdf.read",
+  input: z.object({ path: pdfPath, offset: z.number().int().min(0) }),
+  output: z.object({ data: z.string(), total: z.number(), mtimeMs: z.number() }),
+});
+
+const syncBox = z.object({
+  page: z.number(),
+  /** The box in PDF points from the page's top-left corner. */
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
+/** SyncTeX: where a source line is in the PDF. */
+export const synctexForward = defineRpc({
+  name: "editorplus.synctex.forward",
+  input: z.object({
+    pdf: pdfPath,
+    file: z.string().min(1).max(4096),
+    line: z.number().int().min(1),
+    column: z.number().int().min(0),
+  }),
+  output: z.object({ boxes: z.array(syncBox), error: z.string().nullable() }),
+});
+
+/** SyncTeX: which source line produced a point in the PDF (points from the page's top-left). */
+export const synctexInverse = defineRpc({
+  name: "editorplus.synctex.inverse",
+  input: z.object({ pdf: pdfPath, page: z.number().int().min(1), x: z.number(), y: z.number() }),
+  output: z.object({
+    file: z.string().nullable(),
+    line: z.number().nullable(),
+    column: z.number().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
+export const RUNTIME_PARTS = ["pdf", "viewer", "worker", "css"] as const;
+export type RuntimePart = (typeof RUNTIME_PARTS)[number];
+
+/** One source file of the PDF.js runtime, which the app loads on web only. */
+export const pdfjsPart = defineRpc({
+  name: "editorplus.pdfjs.part",
+  input: z.object({ part: z.enum(RUNTIME_PARTS) }),
+  output: z.object({ version: z.string(), source: z.string() }),
+});
+
+/** Kinds match the `kind` PDF.js passes to its BinaryDataFactory. */
+export const BINARY_KINDS = ["cMapUrl", "standardFontDataUrl", "wasmUrl"] as const;
+export type BinaryKind = (typeof BINARY_KINDS)[number];
+
+export const pdfjsBinary = defineRpc({
+  name: "editorplus.pdfjs.binary",
+  input: z.object({ kind: z.enum(BINARY_KINDS), filename: z.string().min(1).max(200) }),
+  output: z.object({ base64: z.string().nullable() }),
 });

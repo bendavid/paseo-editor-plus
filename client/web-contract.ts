@@ -56,6 +56,7 @@ export interface MessageTransport {
 export interface LanguageClient {
   readonly initializing: Promise<unknown>;
   request(method: string, params: unknown): Promise<unknown>;
+  notify(method: string, params: unknown): void;
   disconnect(): void;
 }
 
@@ -78,7 +79,68 @@ export interface PreviewView {
   destroy(): void;
 }
 
+/** A rendered document (Markdown, Marp) with its source lines marked. */
+export interface DocumentPreviewView {
+  /** Replaces the content, keeping the scroll position. `css` is the document's own (Marp's). */
+  setContent(html: string, css: string, kind: "markdown" | "marp"): void;
+  /** Scrolls to the element made from the nearest line at or before `line`. */
+  scrollToLine(line: number): void;
+  setInvert(invert: boolean): void;
+  setTheme(theme: PluginTheme): void;
+  destroy(): void;
+}
+
+export interface DocumentPreviewOptions {
+  theme: PluginTheme;
+  invert: boolean;
+  /** A click in the preview, with the source line of the element clicked. */
+  onLine(line: number): void;
+  onLink(href: string): void;
+}
+
+export interface SyncBox {
+  page: number;
+  /** In PDF points from the page's top-left corner. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** A built PDF, with SyncTeX linking. */
+export interface PdfPreviewView {
+  /** Shows a new version, keeping the reader's place. */
+  open(bytes: Uint8Array): Promise<void>;
+  /** A message instead of a document, such as before the first build; null hides it. */
+  message(text: string | null): void;
+  /** Scrolls to and flashes the boxes a source line produced. */
+  highlight(boxes: SyncBox[]): void;
+  setInvert(invert: boolean): void;
+  setTheme(theme: PluginTheme): void;
+  destroy(): void;
+}
+
+export type FetchRuntimePart = (input: {
+  part: "pdf" | "viewer" | "worker" | "css";
+}) => Promise<{ version: string; source: string }>;
+export type FetchBinaryData = (input: {
+  kind: "cMapUrl" | "standardFontDataUrl" | "wasmUrl";
+  filename: string;
+}) => Promise<{ base64: string | null }>;
+
+export interface PdfPreviewOptions {
+  theme: PluginTheme;
+  invert: boolean;
+  fetchRuntimePart: FetchRuntimePart;
+  fetchBinaryData: FetchBinaryData;
+  /** A Ctrl/Cmd-click or double-click on a page, in points from its top-left corner. */
+  onPoint(page: number, x: number, y: number): void;
+}
+
 export interface WebModules {
+  decodeBase64(base64: string): Uint8Array;
+  mountDocumentPreview(parent: unknown, options: DocumentPreviewOptions): DocumentPreviewView;
+  mountPdfPreview(parent: unknown, options: PdfPreviewOptions): PdfPreviewView;
   createEditor(options: CodeEditorOptions): CodeEditor;
   createLanguageClient(options: LanguageClientOptions): LanguageClient;
   mountPreview(

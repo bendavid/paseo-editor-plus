@@ -12,6 +12,22 @@ license texts ship in `node_modules/<package>/LICENSE` after `npm ci`.
 | `marked`                                                                                                                                                                                                                                                                                                                                | MIT        | Christopher Jeffrey and the marked contributors |
 | `codemirror-lang-typst` (its `lezer` entry; the WebAssembly parser is not used)                                                                                                                                                                                                                                                         | Apache-2.0 | kxxt and contributors                           |
 
+The plugin's server code also includes, and sends to the app on web:
+
+| Package                                                                     | License    | Copyright          |
+| --------------------------------------------------------------------------- | ---------- | ------------------ |
+| `pdfjs-dist` (embedded by `scripts/embed-pdfjs.mjs`, for the LaTeX preview) | Apache-2.0 | Mozilla Foundation |
+
+and renders Markdown on the daemon host with:
+
+| Package                                                                        | License      | Copyright                                      |
+| ------------------------------------------------------------------------------ | ------------ | ---------------------------------------------- |
+| `@marp-team/marp-core`, `@marp-team/marpit`, `@marp-team/marpit-svg-polyfill`  | MIT          | Marp team                                      |
+| `markdown-it` and its plugins                                                  | MIT          | Vitaly Puzrin, Alex Kocharin, and contributors |
+| `highlight.js` (through Marp)                                                  | BSD-3-Clause | Ivan Sagalaev and contributors                 |
+| `mathjax-full` (through Marp)                                                  | Apache-2.0   | The MathJax Consortium                         |
+| `katex`, `js-yaml`, `postcss`, `postcss-selector-parser`, `xss` (through Marp) | MIT          | their authors                                  |
+
 `client/web/semantic-tokens.ts` follows the approach of `semantic-tokens.ts` in
 [Ahdeyyy/typwriter](https://github.com/Ahdeyyy/typwriter) (MIT, Copyright (c) Ahdeyyy). No code is
 copied from it.

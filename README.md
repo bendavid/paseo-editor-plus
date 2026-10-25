@@ -7,15 +7,22 @@ by a language server on the daemon host, with a live preview beside it where the
   definition, and references;
 - highlighting in two layers: a grammar in the app that colours as you type, and the server's
   semantic tokens over it;
-- for Typst, tinymist's live preview, updated before saving, shown beside the editor, alone, or not
-  at all; clicking the preview moves the cursor to the source (bringing the editor back if it was
-  hidden), and clicking the source scrolls the preview;
+- live previews, updated before saving and shown beside the editor, alone, or not at all; clicking
+  the preview moves the cursor to the source (bringing the editor back if it was hidden), and
+  clicking the source shows its place in the preview:
+  - Typst: tinymist's own preview;
+  - Markdown: rendered on the daemon host, as slides when the file is a
+    [Marp](https://marp.app) deck (`marp: true` in its front matter);
+  - LaTeX: the built PDF, linked to the source with SyncTeX (Ctrl/Cmd-click or double-click the
+    PDF to go to the source);
+- for Typst and LaTeX, a PDF built on every save when switched on in the settings, or with the
+  toolbar's **Compile PDF**;
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
 | Language              | Extensions                                            | Server                                                                                                                     | Installs from           |
 | --------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| Typst (with preview)  | `typ`                                                 | [tinymist](https://github.com/Myriad-Dreamin/tinymist)                                                                     | GitHub release          |
+| Typst                 | `typ`                                                 | [tinymist](https://github.com/Myriad-Dreamin/tinymist)                                                                     | GitHub release          |
 | Python                | `py`, `pyi`                                           | [basedpyright](https://docs.basedpyright.com)                                                                              | npm                     |
 | Rust                  | `rs`                                                  | [rust-analyzer](https://rust-analyzer.github.io)                                                                           | GitHub release          |
 | Go                    | `go`                                                  | [gopls](https://go.dev/gopls)                                                                                              | `go install` (needs Go) |
@@ -71,8 +78,9 @@ host (`~/.paseo/…` by default), the folder other Paseo plugins use for their d
 - **gopls** installs with `go install golang.org/x/tools/gopls@v<version>`, which checks Go's
   checksum database.
 
-Settings show the server in use for each language, offer updates to the plugin's own copies, and
-remove them. Removing the plugin does not delete them (Paseo gives plugins no uninstall hook); use
+Settings show the server in use for each language and offer the plugin's own pinned copy even when
+another is found (the plugin's copy is then used instead); the editor asks only when none is found.
+They update and remove the plugin's copies. Removing the plugin does not delete them (Paseo gives plugins no uninstall hook); use
 **Remove** first, or delete `plugin-data/editor-plus`.
 
 ## How it works
@@ -91,12 +99,27 @@ remove them. Removing the plugin does not delete them (Paseo gives plugins no un
   later and draw over it with the same palette; `@codemirror/lsp-client` has no semantic tokens, so
   `client/web/semantic-tokens.ts` requests full and delta tokens, maps them through edits made
   while the request was out, and leaves comments (and, for Typst, plain text) to the grammar.
-- **Previews run in the panel, without opening a port.** A preview provider starts a preview that
-  serves a page and a WebSocket on `127.0.0.1` on the daemon host (tinymist's starts through its
-  language server). The plugin server fetches the page and holds the WebSocket. The panel writes
-  the page into an iframe and replaces its `WebSocket` with one that travels through plugin calls,
-  so a preview works wherever the app reaches the daemon — over SSH, the relay, or a LAN. The
-  server only connects to ports the session's language server announced.
+- **Previews run in the panel, without opening a port.** Each kind is a provider in
+  `client/previews/`; all of them reach the daemon host only through plugin calls, so they work
+  over SSH, the relay, or a LAN.
+  - **Typst:** tinymist serves its preview page and a WebSocket on `127.0.0.1`. The plugin server
+    fetches the page and holds the WebSocket; the panel writes the page into an iframe and replaces
+    its `WebSocket` with one that travels through plugin calls. The server only connects to ports
+    the session's language server announced.
+  - **Markdown:** the plugin server renders the editor's text with markdown-it, or Marp for a
+    deck, with raw HTML off, local images inlined, and `data-source-line` on block elements. The
+    panel shows it in a shadow root (after removing anything executable) and uses the line marks
+    to scroll with the editor and to jump back.
+  - **LaTeX:** the panel shows the PDF beside the root document (`% !TEX root = …` names it for
+    an included file) with PDF.js, which the plugin server embeds and serves as the pdfjs-viewer
+    plugin does. It checks the PDF's modification time every 1.5 seconds, reads a new build in
+    chunks, and swaps it in keeping the reader's place. `synctex view` and `synctex edit` on the
+    daemon host map lines to PDF boxes and back.
+- **Building PDFs.** Compile to PDF on save sets tinymist's `exportPdf` to `onSave`, and texlab's
+  `build.onSave` with latexmk (`-pdf -interaction=nonstopmode -synctex=1`). The editor tells the
+  server when it saves (`textDocument/didSave`), and sends settings both ways servers read them:
+  in answer to `workspace/configuration` and with `workspace/didChangeConfiguration`. **Compile
+  PDF** runs `tinymist.exportPdf` or texlab's `textDocument/build`.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
   recompiles from them. The file is saved 500 ms after the last edit, and a change on disk while
   edits are unsaved offers Reload or Overwrite.
@@ -109,8 +132,11 @@ remove them. Removing the plugin does not delete them (Paseo gives plugins no un
    on semantic tokens.
 3. To offer an install, add the server to `scripts/update-servers.mjs` (GitHub release) and run it,
    or to `shared/servers.ts` with a lockfile in `server/npm/<server>/` (npm) or a Go module.
-4. For a preview, add a provider to `client/previews/` (start and stop it, scroll it to the cursor,
-   read its jumps back to the source) and to `server/previews/` (recognise the port it announces).
+4. For a preview, add a provider to `client/previews/`: start it, show the cursor's place, follow
+   edits or saves, and report jumps back to the source. A preview served on a port also needs
+   `server/previews/` to recognise the port it announces.
+5. For building a PDF, add `compile` to the profile: the server settings for building on save, and
+   the command or request that builds now.
 
 ## Limits
 
@@ -126,12 +152,15 @@ remove them. Removing the plugin does not delete them (Paseo gives plugins no un
   would shrink it.
 - tinymist's preview protocol is internal to tinymist; tested with tinymist 0.15.10. The Typst
   preview treats the open file as the document entry.
-- No LaTeX preview yet; texlab provides editing support only.
+- Building LaTeX needs latexmk and a TeX distribution on the daemon host, and SyncTeX linking needs
+  its `synctex` tool. The PDF is expected beside the root document.
+- The Markdown preview is read-only (no rich editing), and Marp decks show as a scrolling list of
+  slides, without presenter mode.
 
 ## Develop
 
 ```sh
-npm install
+npm install                                # also embeds PDF.js into server/generated/
 npm run typecheck
 npm test                                   # the session test runs when tinymist is on PATH
 EDITOR_PLUS_NETWORK_TESTS=1 npx vitest run test/installer.network.test.ts test/servers.network.test.ts
@@ -143,6 +172,10 @@ paseo plugin reload editor-plus            # after changes
 
 The network tests download every server (several hundred megabytes) into a temporary
 `PASEO_HOME`, run each the way the plugin does, and check it answers an editor session.
+
+`test/plugin-build.test.ts` repeats the dependency walk Paseo's plugin compiler does over type
+declarations, which fails on `declare module` names and outdated paths inside dependencies'
+declarations; `paths` in tsconfig.json maps the ones Marp brings in.
 
 `client/web/` is the only code that touches the DOM; it is type-checked with `tsconfig.web.json`,
 and the panel reaches it through `client/web-contract.ts`. The rest of the client is type-checked
@@ -158,7 +191,9 @@ it), and evaluates the bundle without a DOM. Server code is type-checked with
   Typst's language server and preview; its VS Code extension showed how to drive the preview.
 - [CodeMirror](https://codemirror.net), its language packages, and
   [`@codemirror/lsp-client`](https://github.com/codemirror/lsp-client) by Marijn Haverbeke and
-  contributors; [codemirror-lang-typst](https://github.com/kxxt/codemirror-lang-typst) by kxxt. See
+  contributors; [codemirror-lang-typst](https://github.com/kxxt/codemirror-lang-typst) by kxxt;
+  [PDF.js](https://github.com/mozilla/pdf.js) by Mozilla; [Marp](https://marp.app) and
+  [markdown-it](https://github.com/markdown-it/markdown-it). See
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - The semantic tokens layer follows the approach of
   [Ahdeyyy/typwriter](https://github.com/Ahdeyyy/typwriter)'s `semantic-tokens.ts` (MIT).

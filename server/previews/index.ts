@@ -9,6 +9,8 @@ export function announcedPreviewPorts(kind: PreviewKind | null, message: string)
   switch (kind) {
     case "tinymist":
       return tinymistPreviewPorts(message);
+    case "markdown":
+    case "latex-pdf":
     case null:
       return [];
   }

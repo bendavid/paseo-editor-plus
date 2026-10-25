@@ -1,6 +1,22 @@
 import type { WebModules } from "../web-contract";
+import { mountDocumentPreview } from "./document-preview";
 import { createEditor, createLanguageClient } from "./editor";
+import { mountPdfPreview } from "./pdf/viewer";
 import { mountPreview } from "./preview";
 
 /** Everything the panel needs from the DOM, loaded only on web. */
-export const webModules: WebModules = { createEditor, createLanguageClient, mountPreview };
+function decodeBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+export const webModules: WebModules = {
+  decodeBase64,
+  createEditor,
+  createLanguageClient,
+  mountPreview,
+  mountDocumentPreview,
+  mountPdfPreview,
+};

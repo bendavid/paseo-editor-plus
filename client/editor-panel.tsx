@@ -1,8 +1,10 @@
 import {
+  openExternalUrl,
   PluginFileConflictError,
   PluginFileDeletedError,
   type PluginFilePanelProps,
   useRpc,
+  useSettings,
   useTabState,
   useWorkspace,
 } from "@getpaseo/plugin/client";
@@ -22,26 +24,29 @@ import { z } from "zod";
 import {
   closeSession,
   connectPreview,
+  locatePdf,
   openSession,
+  pdfjsBinary,
+  pdfjsPart,
   pollSession,
   type PreviewFrame,
+  readPdf,
+  renderMarkdown,
   sendLsp,
   sendPreview,
+  serverSettings,
+  statPdf,
+  synctexForward,
+  synctexInverse,
 } from "../shared/rpc";
-import { type LanguageProfile, languageIdFor } from "../shared/languages";
+import { type LanguageProfile, languageIdFor, serverOptions } from "../shared/languages";
 import { messageOf, SessionConnection } from "./connection";
 import { LspTransport } from "./lsp-transport";
 import { previewProvider } from "./previews";
 import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
-import type { SourceLocation } from "./previews/types";
+import type { Preview, PreviewCalls, SourceLocation } from "./previews/types";
 import { TooltipProvider, useTooltip } from "./tooltip";
-import type {
-  CharPosition,
-  CodeEditor,
-  LanguageClient,
-  PreviewView,
-  WebModules,
-} from "./web-contract";
+import type { CharPosition, CodeEditor, LanguageClient, WebModules } from "./web-contract";
 
 const SAVE_DELAY_MS = 500;
 /** Cursor moves sent to the preview at most this often. */
@@ -111,16 +116,32 @@ export function EditorPanel(props: EditorPanelProps) {
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
+  const settings = useSettings(serverSettings);
+  const compileOnSave =
+    settings.status === "ready" && settings.values.servers[language.id]?.compileOnSave === true;
+
   const calls = {
     open: useRpc(openSession),
     send: useRpc(sendLsp),
     poll: useRpc(pollSession),
-    connectPreview: useRpc(connectPreview),
     sendPreview: useRpc(sendPreview),
     close: useRpc(closeSession),
   };
   const callsRef = useRef(calls);
   callsRef.current = calls;
+  const previewCalls: PreviewCalls = {
+    connectPreview: useRpc(connectPreview),
+    renderMarkdown: useRpc(renderMarkdown),
+    locatePdf: useRpc(locatePdf),
+    statPdf: useRpc(statPdf),
+    readPdf: useRpc(readPdf),
+    synctexForward: useRpc(synctexForward),
+    synctexInverse: useRpc(synctexInverse),
+    pdfjsPart: useRpc(pdfjsPart),
+    pdfjsBinary: useRpc(pdfjsBinary),
+  };
+  const previewCallsRef = useRef(previewCalls);
+  previewCallsRef.current = previewCalls;
 
   const panel = useRef<View>(null);
   const editorHost = useRef<View>(null);
@@ -138,13 +159,14 @@ export function EditorPanel(props: EditorPanelProps) {
   const session = useRef<{
     connection: SessionConnection;
     client: LanguageClient;
+    fileUri: string;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewRetries, setPreviewRetries] = useState(0);
   const preview = useRef<{
-    taskId: string;
-    view: PreviewView | null;
-    /** Frames that arrived before the page was written. */
+    instance: Preview | null;
+    /** Frames that arrived before the preview was ready. */
     pending: PreviewFrame[];
   } | null>(null);
   const lastScroll = useRef(0);
@@ -183,6 +205,10 @@ export function EditorPanel(props: EditorPanelProps) {
       }
       setFileError(null);
       setFileState("ready");
+      // Servers build on save (tinymist, texlab) when told the file was saved.
+      const current = session.current;
+      current?.client.notify("textDocument/didSave", { textDocument: { uri: current.fileUri } });
+      preview.current?.instance?.saved();
     },
     [file, setModified],
   );
@@ -207,77 +233,73 @@ export function EditorPanel(props: EditorPanelProps) {
     };
   }, [file, load]);
 
-  // --- The preview, inside this panel, fed through the session.
+  // --- The preview, inside this panel.
 
-  /** How a preview reaches the language server: commands, and the file it shows. */
-  const previewContext = useCallback(
-    (client: LanguageClient) => ({
-      filePath: file.path,
-      command: (name: string, args: unknown[]) =>
-        client.request("workspace/executeCommand", { command: name, arguments: args }),
-    }),
+  /** A jump from the preview (or an inverse search) to a source location. */
+  const jumpToSource = useCallback(
+    (jump: SourceLocation) => {
+      if (jump.path === file.path) {
+        // A click in the preview asks for its source; with the preview alone, show the editor.
+        if (viewMode(savedRef.current) === "preview") {
+          setViewRef.current("split");
+          setTimeout(() => editor.current?.reveal(jump.start, jump.end), 50);
+        } else {
+          editor.current?.reveal(jump.start, jump.end);
+        }
+        return;
+      }
+      toastRef.current.show(
+        `That is in ${baseName(jump.path)}, line ${jump.start.line + 1}. Open it from Files.`,
+      );
+    },
     [file.path],
   );
 
-  const scrollPreview = useCallback(
-    (position: CharPosition) => {
-      const client = session.current?.client;
-      const task = preview.current;
-      if (!client || !task?.taskId || !provider) return;
-      void provider.reveal(previewContext(client), task.taskId, position).catch(() => {});
-    },
-    [previewContext, provider],
-  );
+  const scrollPreview = useCallback((position: CharPosition) => {
+    preview.current?.instance?.reveal(position);
+  }, []);
 
   const stopPreview = useCallback(() => {
     const task = preview.current;
     preview.current = null;
-    if (!task) return;
-    task.view?.destroy();
-    const client = session.current?.client;
-    if (client && provider && task.taskId) {
-      void provider.stop(previewContext(client), task.taskId).catch(() => {});
-    }
-  }, [previewContext, provider]);
+    task?.instance?.destroy();
+    setPreviewLoading(false);
+  }, []);
 
   const startPreview = useCallback(async () => {
+    if (!provider || preview.current) return;
     const current = session.current;
-    if (!current || preview.current || !provider) return;
-    const task = { taskId: "", view: null as PreviewView | null, pending: [] as PreviewFrame[] };
+    if (provider.needsServer && !current) return;
+    const task = { instance: null as Preview | null, pending: [] as PreviewFrame[] };
     preview.current = task;
     setPreviewError(null);
     setPreviewLoading(true);
     try {
-      const { task: taskId, port } = await provider.start(previewContext(current.client));
-      task.taskId = taskId;
+      const instance = await provider.start({
+        filePath: file.path,
+        text: () => text.current,
+        client: current?.client ?? null,
+        session: current
+          ? {
+              id: current.connection.sessionId,
+              sendPreview: (message) => current.connection.sendPreview(message),
+            }
+          : null,
+        calls: previewCallsRef.current,
+        web,
+        parent: previewHost.current,
+        theme: themeRef.current,
+        invert: invertRef.current,
+        jump: (location) => jumpToSourceRef.current(location),
+        openExternal: (url) => void openExternalUrl(url).catch(() => {}),
+        notice: (message) => toastRef.current.show(message),
+      });
       if (preview.current !== task) {
-        void provider.stop(previewContext(current.client), taskId).catch(() => {});
+        instance.destroy();
         return;
       }
-      const sessionId = current.connection.sessionId;
-      const { html } = await callsRef.current.connectPreview({
-        sessionId,
-        port,
-        includeHtml: true,
-      });
-      if (preview.current !== task || !html) return;
-      const view = web.mountPreview(
-        previewHost.current,
-        html,
-        {
-          reconnect: async () => {
-            await callsRef.current.connectPreview({ sessionId, port, includeHtml: false });
-          },
-          send: (message) => current.connection.sendPreview(message),
-        },
-        {
-          invert: invertRef.current,
-          background: themeRef.current.colors.surface1,
-          invertTarget: provider.invertTarget,
-        },
-      );
-      task.view = view;
-      for (const frame of task.pending) view.deliver(frame);
+      task.instance = instance;
+      for (const frame of task.pending) instance.deliver(frame);
       task.pending = [];
     } catch (cause) {
       if (preview.current === task) {
@@ -287,7 +309,7 @@ export function EditorPanel(props: EditorPanelProps) {
     } finally {
       setPreviewLoading(false);
     }
-  }, [previewContext, provider, web]);
+  }, [file.path, provider, web]);
 
   // --- The editor, mounted once the text is known.
 
@@ -303,6 +325,7 @@ export function EditorPanel(props: EditorPanelProps) {
         text.current = next;
         unsaved.current = next;
         setModified(true);
+        preview.current?.instance?.textChanged();
         if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(() => void saveRef.current(false), SAVE_DELAY_MS);
       },
@@ -328,11 +351,11 @@ export function EditorPanel(props: EditorPanelProps) {
 
   useEffect(() => {
     editor.current?.setTheme(theme);
-    preview.current?.view?.setBackground(theme.colors.surface1);
+    preview.current?.instance?.setTheme(theme);
   }, [theme]);
 
   useEffect(() => {
-    preview.current?.view?.setInvert(invert);
+    preview.current?.instance?.setInvert(invert);
   }, [invert]);
 
   // Open at the line Paseo asked for, such as from an agent's file reference.
@@ -368,21 +391,7 @@ export function EditorPanel(props: EditorPanelProps) {
         setServer({ status: opened.reason, message: opened.message });
         return;
       }
-      const onJump = (jump: SourceLocation) => {
-        if (jump.path === file.path) {
-          // A click in the preview asks for its source; with the preview alone, show the editor.
-          if (viewMode(savedRef.current) === "preview") {
-            setViewRef.current("split");
-            setTimeout(() => editor.current?.reveal(jump.start, jump.end), 50);
-          } else {
-            editor.current?.reveal(jump.start, jump.end);
-          }
-          return;
-        }
-        toastRef.current.show(
-          `That is in ${baseName(jump.path)}, line ${jump.start.line + 1}. Open it from Files.`,
-        );
-      };
+      const options = serverOptions(language, compileOnSave);
       const clientFile = {
         uri: opened.fileUri,
         languageId: languageIdFor(language, file.extension),
@@ -402,14 +411,13 @@ export function EditorPanel(props: EditorPanelProps) {
           preview: (frame) => {
             const task = preview.current;
             if (!task) return;
-            if (task.view) task.view.deliver(frame);
+            if (task.instance) task.instance.deliver(frame);
             else task.pending.push(frame);
           },
           ended: (reason) => {
             if (disposed) return;
             editor.current?.setLanguageClient(null, null);
-            preview.current?.view?.destroy();
-            preview.current = null;
+            if (provider?.needsServer) stopPreview();
             session.current = null;
             setServer({ status: "ended", message: reason });
           },
@@ -422,26 +430,26 @@ export function EditorPanel(props: EditorPanelProps) {
             if (!provider) return false;
             const jump = provider.sourceJump(method, params);
             if (jump) {
-              onJump(jump);
+              jumpToSourceRef.current(jump);
               return true;
             }
             return provider.swallows(method);
           },
           refreshSemanticTokens: () => editor.current?.refreshSemanticTokens(),
         },
-        language.server.options,
+        options,
         language.server.configSection,
       );
       const client = web.createLanguageClient({
         rootUri: opened.rootUri,
         transport,
-        initializationOptions: { ...language.server.options },
+        initializationOptions: options,
         otherFile: (uri) =>
           toastRef.current.show(
             `The definition is in ${baseName(pathFromUri(uri))}. Open it from Files.`,
           ),
       });
-      session.current = { connection, client };
+      session.current = { connection, client, fileUri: opened.fileUri };
       editor.current?.setLanguageClient(client, clientFile);
       try {
         await client.initializing;
@@ -450,12 +458,14 @@ export function EditorPanel(props: EditorPanelProps) {
         return;
       }
       if (disposed) return;
+      client.notify("workspace/didChangeConfiguration", {
+        settings: { [language.server.configSection]: options },
+      });
       setServer({ status: "ready", version: opened.version });
-      if (viewMode(savedRef.current) !== "editor") void startPreview();
     })();
     return () => {
       disposed = true;
-      stopPreview();
+      if (provider?.needsServer) stopPreview();
       const current = session.current;
       session.current = null;
       if (current) {
@@ -464,20 +474,14 @@ export function EditorPanel(props: EditorPanelProps) {
         current.connection.close();
       }
     };
-  }, [editorReady, file.path, language, provider, restarts, startPreview, stopPreview, web]);
+  }, [compileOnSave, editorReady, file.path, language, provider, restarts, stopPreview, web]);
 
   // --- Toolbar actions.
 
   const setView = useCallback(
-    (next: ViewMode) => {
-      setSaved({ view: next, invert: savedRef.current.invert });
-      if (next === "editor") stopPreview();
-      else void startPreview();
-    },
-    [setSaved, startPreview, stopPreview],
+    (next: ViewMode) => setSaved({ view: next, invert: savedRef.current.invert }),
+    [setSaved],
   );
-  const setViewRef = useRef(setView);
-  setViewRef.current = setView;
   const toggleInvert = useCallback(() => {
     setSaved({ ...savedRef.current, invert: !invert });
   }, [invert, setSaved]);
@@ -490,10 +494,53 @@ export function EditorPanel(props: EditorPanelProps) {
   const reload = useCallback(() => void load(), [load]);
   const overwrite = useCallback(() => void save(true), [save]);
 
+  const setViewRef = useRef(setView);
+  setViewRef.current = setView;
+  const jumpToSourceRef = useRef(jumpToSource);
+  jumpToSourceRef.current = jumpToSource;
+
+  const compileNow = useCallback(async () => {
+    const current = session.current;
+    const compile = language.compile;
+    if (!current || !compile) return;
+    // Build what is on screen: save first.
+    if (unsaved.current !== null) await saveRef.current(false);
+    try {
+      if (compile.now.kind === "command") {
+        await current.client.request("workspace/executeCommand", {
+          command: compile.now.command,
+          arguments: [file.path],
+        });
+      } else {
+        const result = (await current.client.request(compile.now.method, {
+          textDocument: { uri: current.fileUri },
+        })) as { status?: number } | null;
+        // texlab: 0 success, 1 error, 2 failure, 3 cancelled.
+        if (result && typeof result.status === "number" && result.status !== 0) {
+          toastRef.current.error("The build reported errors; see the problems in the editor.");
+          return;
+        }
+      }
+      toastRef.current.show("Compiled to PDF.");
+      preview.current?.instance?.saved();
+    } catch (cause) {
+      toastRef.current.error(`Compiling failed: ${messageOf(cause)}`);
+    }
+  }, [file.path, language.compile]);
+
   const styles = useMemo(() => panelStyles(theme), [theme]);
   const ready = server.status === "ready";
   const mode: ViewMode = provider ? viewMode(saved) : "editor";
-  const showPreview = provider !== null && mode !== "editor" && ready;
+  const previewPossible = provider !== null && (!provider.needsServer || ready);
+  const showPreview = previewPossible && mode !== "editor";
+  const wantPreview = showPreview && editorReady;
+
+  // The preview runs while it is shown; a server-backed one restarts with its server.
+  useEffect(() => {
+    if (wantPreview) void startPreview();
+    else stopPreview();
+  }, [previewRetries, startPreview, stopPreview, wantPreview]);
+  useEffect(() => stopPreview, [stopPreview]);
   // Until the preview can show (no server yet), keep the editor rather than an empty panel.
   const showEditor = mode !== "preview" || !showPreview;
   let status: string;
@@ -518,6 +565,16 @@ export function EditorPanel(props: EditorPanelProps) {
               disabled={!ready}
               onPress={format}
             />
+            {language.compile ? (
+              <IconButton
+                theme={theme}
+                icon="Hammer"
+                label="Compile PDF"
+                tooltip={compileOnSave ? "Compile to PDF (also on every save)" : "Compile to PDF"}
+                disabled={!ready}
+                onPress={() => void compileNow()}
+              />
+            ) : null}
             {provider ? (
               <>
                 <IconButton
@@ -550,7 +607,7 @@ export function EditorPanel(props: EditorPanelProps) {
                     label="Side by side"
                     tooltip={layout.compact ? "Editor and preview" : "Side by side"}
                     selected={mode === "split"}
-                    disabled={!ready}
+                    disabled={!previewPossible}
                     onPress={() => setView("split")}
                   />
                   <IconButton
@@ -558,7 +615,7 @@ export function EditorPanel(props: EditorPanelProps) {
                     icon="Eye"
                     label="Preview only"
                     selected={mode === "preview"}
-                    disabled={!ready}
+                    disabled={!previewPossible}
                     onPress={() => setView("preview")}
                   />
                 </View>
@@ -617,7 +674,11 @@ export function EditorPanel(props: EditorPanelProps) {
             {previewError ? (
               <View style={styles.overlay}>
                 <Text style={styles.error}>{previewError}</Text>
-                <TextButton theme={theme} label="Retry" onPress={() => void startPreview()} />
+                <TextButton
+                  theme={theme}
+                  label="Retry"
+                  onPress={() => setPreviewRetries((count) => count + 1)}
+                />
               </View>
             ) : null}
           </View>
