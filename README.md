@@ -142,6 +142,11 @@ file, so a project's word list applies as it does in VS Code.
   server when it saves (`textDocument/didSave`), and sends settings both ways servers read them:
   in answer to `workspace/configuration` and with `workspace/didChangeConfiguration`. **Compile
   PDF** runs `tinymist.exportPdf` or texlab's `textDocument/build`.
+- **LaTeX build errors come from the log too.** texlab reports a build's errors only when they
+  have a line and only for documents with `\documentclass`, so a file that ends inside an argument,
+  or a bare file, failed silently. `server/latex.ts` parses the root's log (following the files TeX
+  opens to attribute each error), a LaTeX tab checks it every 2 seconds, and the transport merges
+  those errors into the server's diagnostics, skipping ones texlab already reports.
 - **Spelling is checked by cspell on the daemon host, not by the browser.** The browser's
   spellchecker drops its marks whenever the editor redraws a span, which language-server
   highlighting and diagnostics do all the time, and checks again only where you type.
