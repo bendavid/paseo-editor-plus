@@ -63,6 +63,7 @@ import type {
   CharPosition,
   CodeEditor,
   DockSide,
+  ProblemCounts,
   LanguageClient,
   SpellingService,
   WebModules,
@@ -197,6 +198,7 @@ export function EditorPanel(props: EditorPanelProps) {
   const spellingCallsRef = useRef(spellingCalls);
   spellingCallsRef.current = spellingCalls;
   const [spellingMessage, setSpellingMessage] = useState<string | null>(null);
+  const [problems, setProblems] = useState<ProblemCounts>({ errors: 0, warnings: 0, infos: 0 });
   // Components something here needs but the host lacks, and those the user put off for this tab.
   const [neededComponents, setNeededComponents] = useState<readonly ComponentId[]>([]);
   const [deferredComponents, setDeferredComponents] = useState<readonly ComponentId[]>([]);
@@ -464,6 +466,7 @@ export function EditorPanel(props: EditorPanelProps) {
         preview.current?.instance?.textChanged();
         scheduleSave();
       },
+      onProblems: setProblems,
       onSave: () => {
         if (saveTimer.current !== undefined) clearTimeout(saveTimer.current);
         saveTimer.current = undefined;
@@ -734,6 +737,11 @@ export function EditorPanel(props: EditorPanelProps) {
           <Text style={styles.status} numberOfLines={1} testID="editor-plus-status">
             {status}
           </Text>
+          <ProblemsButton
+            theme={theme}
+            counts={problems}
+            onPress={() => editor.current?.toggleProblems()}
+          />
           <View style={styles.group}>
             <IconButton
               theme={theme}
@@ -1026,6 +1034,60 @@ function MissingComponent({
         }}
       />
     </>
+  );
+}
+
+/** The language server's errors and warnings: opens the list of them. Hidden when there are none. */
+function ProblemsButton({
+  theme,
+  counts,
+  onPress,
+}: {
+  theme: PluginTheme;
+  counts: ProblemCounts;
+  onPress(): void;
+}) {
+  const total = counts.errors + counts.warnings + counts.infos;
+  const label = [
+    counts.errors ? `${counts.errors} ${counts.errors === 1 ? "error" : "errors"}` : null,
+    counts.warnings ? `${counts.warnings} ${counts.warnings === 1 ? "warning" : "warnings"}` : null,
+    counts.infos ? `${counts.infos} ${counts.infos === 1 ? "note" : "notes"}` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const hover = useTooltip({ text: `${label} · show the list (F8 for the next one)` });
+  if (total === 0) return null;
+  const item = (icon: string, color: string, count: number) =>
+    count > 0 ? (
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+        <Icon name={icon} size={13} color={color} />
+        <Text style={{ fontSize: 12, color: theme.colors.foreground }}>{count}</Text>
+      </View>
+    ) : null;
+  return (
+    <View ref={hover.ref} onPointerEnter={hover.onHoverIn} onPointerLeave={hover.onHoverOut}>
+      <Pressable
+        testID="editor-plus-problems"
+        accessibilityRole="button"
+        accessibilityLabel={`Problems: ${label}`}
+        onPressIn={hover.onPressIn}
+        onPress={onPress}
+        style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          marginRight: 6,
+          borderRadius: 6,
+          backgroundColor: pressed || hovered ? theme.colors.surface2 : "transparent",
+        })}
+      >
+        {item("CircleX", theme.colors.statusDanger, counts.errors)}
+        {item("TriangleAlert", theme.colors.statusWarning, counts.warnings)}
+        {item("Info", theme.colors.foregroundMuted, counts.infos)}
+      </Pressable>
+    </View>
   );
 }
 

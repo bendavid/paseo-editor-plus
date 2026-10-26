@@ -215,6 +215,24 @@ export function editorTheme(theme: PluginTheme, language: LanguageTags): Extensi
           color: colors.accentForeground,
         },
         ".cm-panels": { backgroundColor: colors.surface1, color: colors.foreground },
+        // The problems list (the toolbar's count opens it): the theme's colours and text size.
+        ".cm-panels-bottom": { borderTop: `1px solid ${colors.border}` },
+        ".cm-panel.cm-panel-lint": { fontSize: "var(--editor-plus-font-size)" },
+        ".cm-panel.cm-panel-lint ul": { maxHeight: "180px" },
+        ".cm-panel.cm-panel-lint ul li": { padding: "3px 28px 3px 10px", cursor: "pointer" },
+        ".cm-panel.cm-panel-lint ul [aria-selected]": {
+          backgroundColor: `color-mix(in srgb, ${colors.accent} 18%, transparent)`,
+        },
+        ".cm-panel.cm-panel-lint ul:focus [aria-selected]": {
+          backgroundColor: `color-mix(in srgb, ${colors.accent} 32%, transparent)`,
+          color: colors.foreground,
+        },
+        ".cm-panel.cm-panel-lint [name=close]": {
+          color: colors.foregroundMuted,
+          fontSize: "16px",
+          padding: "2px 8px",
+          cursor: "pointer",
+        },
         ".cm-foldPlaceholder": {
           backgroundColor: colors.surface2,
           border: "none",

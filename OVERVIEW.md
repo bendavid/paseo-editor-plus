@@ -3,7 +3,7 @@ A code editor for Paseo's file tab, backed by language servers on your computer,
 What you can do in the editor:
 
 - Complete code as you type, see documentation on hover and signature help while calling functions.
-- See errors and warnings from the language server as you type.
+- See errors and warnings from the language server as you type, underlined and marked beside the line numbers; the toolbar counts them, and clicking the count lists them all (click one to go there, F8 for the next). LaTeX build errors from the last Compile show the same way.
 - Format the document (the toolbar button or Shift+Alt+F), rename a symbol (F2), go to a definition in the same file (F12), find references (Shift+F12), and fold sections.
 - Read code coloured as you type by the editor's own parser, refined by the language server once it has analysed the file.
 - Save automatically, 800 ms after you stop typing like Paseo's own editor, or turn that off (or change the delay) in the plugin's settings and save with Ctrl/Cmd+S. With auto-save off, unsaved edits stay with the tab, even across an app reload, until you save or close it without saving.

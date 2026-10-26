@@ -21,6 +21,8 @@ export interface CodeEditor {
   refreshSemanticTokens(): void;
   format(): void;
   setTheme(theme: PluginTheme): void;
+  /** Opens or closes the list of the language server's problems at the bottom of the editor. */
+  toggleProblems(): void;
   /** Turns spellchecking of the file's prose on or off. */
   setSpellcheck(enabled: boolean): void;
   focus(): void;
@@ -49,6 +51,13 @@ export interface SpellingService {
   onMissing(): void;
 }
 
+export interface ProblemCounts {
+  errors: number;
+  warnings: number;
+  /** Information and hints. */
+  infos: number;
+}
+
 export interface CodeEditorOptions {
   /** On web, a React Native `View` ref is its DOM element. */
   parent: unknown;
@@ -63,6 +72,8 @@ export interface CodeEditorOptions {
   onChange(text: string): void;
   /** Mod-S: save now. */
   onSave(): void;
+  /** The language server's problems in the file, counted by severity, whenever they change. */
+  onProblems(counts: ProblemCounts): void;
   /** `pointer` is true when a click or drag moved the cursor. */
   onCursor(position: CharPosition, pointer: boolean): void;
 }

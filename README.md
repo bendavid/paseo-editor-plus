@@ -3,8 +3,9 @@
 A [Paseo](https://paseo.sh) plugin that opens files in the file tab with a CodeMirror editor backed
 by a language server on the daemon host, with a live preview beside it where the language has one:
 
-- completion, hover documentation, signature help, diagnostics, formatting, rename, go to
-  definition, and references;
+- completion, hover documentation, signature help, diagnostics (underlined, marked in the gutter,
+  counted in the toolbar, and listed in a problems panel), formatting, rename, go to definition,
+  and references;
 - highlighting in two layers: a grammar in the app that colours as you type, and the server's
   semantic tokens over it;
 - live previews, updated before saving and shown beside the editor, alone, or not at all; drag

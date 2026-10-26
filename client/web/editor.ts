@@ -7,7 +7,13 @@ import {
 } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput } from "@codemirror/language";
-import { lintKeymap } from "@codemirror/lint";
+import {
+  closeLintPanel,
+  forEachDiagnostic,
+  lintGutter,
+  lintKeymap,
+  openLintPanel,
+} from "@codemirror/lint";
 import {
   findReferencesKeymap,
   formatDocument,
@@ -223,11 +229,28 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
     return line.from + charToUtf16Column(line.text, Math.max(0, position.character));
   };
 
+  // The panel shows counts of the language server's problems; report them when they change.
+  let reported = "";
+  const reportProblems = (state: EditorState) => {
+    const counts = { errors: 0, warnings: 0, infos: 0 };
+    forEachDiagnostic(state, (diagnostic) => {
+      if (diagnostic.severity === "error") counts.errors += 1;
+      else if (diagnostic.severity === "warning") counts.warnings += 1;
+      else counts.infos += 1;
+    });
+    const key = `${counts.errors}/${counts.warnings}/${counts.infos}`;
+    if (key === reported) return;
+    reported = key;
+    options.onProblems(counts);
+  };
+
   const view = new EditorView({
     parent: options.parent as HTMLElement,
     state: EditorState.create({
       doc: options.text,
       extensions: [
+        // A marker beside lines with problems, as in VS Code; the message shows on hover.
+        lintGutter(),
         lineNumbers(),
         foldGutter(),
         highlightActiveLineGutter(),
@@ -275,6 +298,7 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
             const pointer = update.transactions.some((tr) => tr.isUserEvent("select.pointer"));
             options.onCursor(charPosition(update.state, update.state.selection.main.head), pointer);
           }
+          reportProblems(update.state);
         }),
       ],
     }),
@@ -321,6 +345,10 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
     },
     setTheme(theme: PluginTheme) {
       view.dispatch({ effects: themeSlot.reconfigure(editorTheme(theme, language)) });
+    },
+    toggleProblems() {
+      if (view.dom.querySelector(".cm-panel-lint")) closeLintPanel(view);
+      else openLintPanel(view);
     },
     setSpellcheck(enabled) {
       view.dispatch({ effects: spellSlot.reconfigure(spelling(enabled)) });
