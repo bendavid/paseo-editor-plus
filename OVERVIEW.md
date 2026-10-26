@@ -24,7 +24,7 @@ How it works: each open editor tab runs its own language server on the daemon ho
 
 Limits:
 
-- Works in the desktop app and in a browser. The iOS and Android apps show the source, read-only.
+- Works in the desktop app and in a browser. On iOS and Android, Paseo's own viewers open these files as before, without asking; the plugin's settings are still there.
 - Files opened from an agent's link or a search result open in Paseo's own editor.
 - Go to definition and preview clicks that point into another file show the file name and line instead of opening it.
 - The Typst preview shows the open file as the whole document; a chapter included from a main file is previewed on its own.

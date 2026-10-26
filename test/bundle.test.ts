@@ -40,15 +40,17 @@ describe("client bundle", () => {
     expect(bundle).not.toMatch(/\bimport\s*\(/);
   });
 
-  it("evaluates without a DOM, as the native apps do, and registers the panel", async () => {
+  /** Evaluates the bundle without a DOM, as `os`, and lists what it registers. */
+  async function registrations(os: "ios" | "android" | "web"): Promise<string[]> {
     const bundle = await compileClient();
-    // Paseo does not minify plugin bundles, and the native apps parse (but never run) the editor
-    // and its grammars. Loading them from the plugin server on web would shrink this.
-    expect(bundle.length).toBeLessThan(2_500_000);
-    // Host modules are stand-ins; any property is a no-op function.
+    // Host modules are stand-ins; any property is a no-op function, except React Native's Platform.
     const stub: object = new Proxy(() => stub, { get: () => stub, apply: () => stub });
+    const reactNative = new Proxy(stub, {
+      get: (_target, key) => (key === "Platform" ? { OS: os } : stub),
+    });
     const module = { exports: {} as { default?: (client: unknown) => unknown } };
-    const sandbox = { module, exports: module.exports, require: () => stub, console };
+    const require = (name: string) => (name === "react-native" ? reactNative : stub);
+    const sandbox = { module, exports: module.exports, require, console };
     runInNewContext(bundle, sandbox);
     const registered: string[] = [];
     const client = {
@@ -63,6 +65,14 @@ describe("client bundle", () => {
       ),
     };
     module.exports.default?.(client);
+    return registered;
+  }
+
+  it("evaluates without a DOM and registers a panel per language on web", async () => {
+    // Paseo does not minify plugin bundles, and the native apps parse (but never run) the editor
+    // and its grammars. Loading them from the plugin server on web would shrink this.
+    expect((await compileClient()).length).toBeLessThan(2_500_000);
+    const registered = await registrations("web");
     expect(registered).toEqual([
       "settings:servers",
       ...LANGUAGES.map(
@@ -70,6 +80,11 @@ describe("client bundle", () => {
       ),
     ]);
     expect(registered).toContain("panel:typst:typ");
+  });
+
+  it("registers no file panels on iOS and Android, where Paseo's own open these files", async () => {
+    expect(await registrations("ios")).toEqual(["settings:servers"]);
+    expect(await registrations("android")).toEqual(["settings:servers"]);
   });
 });
 

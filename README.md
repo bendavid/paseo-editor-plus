@@ -40,8 +40,9 @@ by a language server on the daemon host, with a live preview beside it where the
 
 See [OVERVIEW.md](OVERVIEW.md) for what it does from a user's point of view.
 
-Requires Paseo 0.13.0 or later. Runs in the desktop app and the web app; the iOS and Android apps
-show the source read-only.
+Requires Paseo 0.13.0 or later. Runs in the desktop app and the web app. On iOS and Android it
+registers no file panels, so Paseo's own panels open these files without asking; its settings
+screen works there too.
 
 ## Install
 
