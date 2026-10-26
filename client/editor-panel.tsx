@@ -1004,7 +1004,7 @@ function MissingComponent({
     ? `Downloading ${info.name} ${info.version}…`
     : failed
       ? `Could not download ${info.name}: ${error ?? status.error ?? "unknown error"}`
-      : `${info.neededBy} needs ${info.name} ${info.version}, downloaded from npm (${formatSize(info.installedSize)}).`;
+      : `${info.neededBy} needs ${info.name} ${info.version}, downloaded from npm (about ${formatSize(info.installedSize)} installed).`;
   return (
     <>
       <Banner theme={theme} danger={failed} text={text} testID={`editor-plus-component-${id}`}>

@@ -90,13 +90,15 @@ They update and remove the plugin's copies. Removing the plugin does not delete 
 
 ## Downloads
 
-PDF.js (for the LaTeX preview) and cspell with its dictionaries (for spelling) are downloaded the
-first time they are needed, into `$PASEO_HOME/plugin-data/editor-plus/components/<id>/<version>/`.
+PDF.js (for the LaTeX preview) and cspell with its dictionaries (for spelling) are installed when
+you confirm, into `$PASEO_HOME/plugin-data/editor-plus/components/<id>/<version>/`.
 Paseo runs a plugin's server code without a way to find the plugin's own folder
 ([#6257](https://github.com/getpaseo/paseo/issues/6257)), so the server can read files only from
 where it can name them. Each installs with `npm ci --omit=dev --omit=optional --ignore-scripts` from
-the lockfile in `server/npm/<id>/`, so it needs npm on the daemon host. They are the plugin's own
-pinned parts, so they install without asking; **Settings › Downloads** lists and removes them.
+the lockfile in `server/npm/<id>/`, so it needs npm on the daemon host. The server never installs
+one on its own: when the LaTeX preview or the spellchecker finds one missing, the editor shows a
+banner, and **Install…** opens the same confirmation as for language servers (source, size,
+license, destination). **Settings › Downloads** lists, installs, and removes them.
 
 Words added from the editor go to `plugin-data/editor-plus/spelling/words.txt`. cspell also reads
 the workspace's `cspell.json`, `.cspell.json`, `cspell.config.yaml`, and the like, nearest the
