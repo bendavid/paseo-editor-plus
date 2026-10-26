@@ -45,6 +45,8 @@ export interface SpellingService {
   add(word: string): Promise<{ error: string | null }>;
   /** What the spellchecker is waiting for (a download, an error), or null once it works. */
   onStatus(message: string | null): void;
+  /** cspell is not installed: the panel offers to install it. */
+  onMissing(): void;
 }
 
 export interface CodeEditorOptions {

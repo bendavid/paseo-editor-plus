@@ -12,6 +12,7 @@ import type {
   synctexForward,
   synctexInverse,
 } from "../../shared/rpc";
+import type { ComponentId } from "../../shared/components";
 import type { CharPosition, LanguageClient, WebModules } from "../web-contract";
 
 /** A place in a source file, in zero-based lines and character (code point) columns. */
@@ -55,6 +56,8 @@ export interface PreviewServices {
   invert: boolean;
   /** The preview asks the editor to show a source location. */
   jump(location: SourceLocation): void;
+  /** A component the preview needs is not installed: the panel offers to install it. */
+  requestComponent(id: ComponentId): void;
   openExternal(url: string): void;
   notice(message: string): void;
 }

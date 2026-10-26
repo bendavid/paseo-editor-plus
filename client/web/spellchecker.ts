@@ -202,15 +202,11 @@ export function spellchecker(rules: SpellingRules, service: SpellingService): Ex
           }
           for (const [word, issues] of byWord) results.set(word, issues);
         } else {
-          // Downloading cspell, or it failed: say so, and ask again shortly.
+          // cspell is missing (the panel asks the user to install it), downloading, or failed:
+          // say so, and ask again shortly.
+          if (answer.state === "missing") service.onMissing();
           service.onStatus(
-            componentMessage({
-              id: "spelling",
-              state: answer.state,
-              version: "",
-              folder: null,
-              error: answer.error,
-            }),
+            componentMessage({ id: "spelling", state: answer.state, error: answer.error }),
           );
           retry = true;
         }

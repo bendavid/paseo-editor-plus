@@ -37,13 +37,16 @@ export const latexPdfPreview: PreviewProvider = {
     let destroyed = false;
     let waitingMessage = true;
 
-    // PDF.js is downloaded into plugin-data the first time a preview needs it.
+    // PDF.js is installed into plugin-data once the user agrees; the panel's banner asks.
     let runtimeReady = false;
-    let retry = true;
     const ensureRuntime = async (): Promise<boolean> => {
       if (runtimeReady) return true;
-      const status = await calls.componentStatus({ id: "pdfjs", install: true, retry });
-      retry = false;
+      const status = await calls.componentStatus({ id: "pdfjs", install: false });
+      if (status.state === "missing") {
+        services.requestComponent("pdfjs");
+        view.message("The LaTeX preview needs PDF.js. Install it from the banner above.");
+        return false;
+      }
       const message = componentMessage(status);
       if (message) {
         view.message(message);

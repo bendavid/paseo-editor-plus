@@ -268,10 +268,11 @@ const componentStatus = z.object({
   state: z.enum(["ready", "missing", "installing", "failed"]),
   version: z.string(),
   folder: z.string().nullable(),
+  destination: z.string(),
   error: z.string().nullable(),
 });
 
-/** A component's status; with `install`, starts downloading it if it is missing. */
+/** A component's status; with `install` (only after the user confirms), downloads it if missing. */
 export const componentStatusRpc = defineRpc({
   name: "editorplus.component.status",
   input: z.object({ id: componentId, install: z.boolean(), retry: z.boolean().optional() }),

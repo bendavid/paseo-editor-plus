@@ -44,11 +44,19 @@ import {
   synctexForward,
   synctexInverse,
 } from "../shared/rpc";
+import { COMPONENTS, type ComponentId } from "../shared/components";
 import { type LanguageProfile, languageIdFor, serverOptions } from "../shared/languages";
 import { messageOf, SessionConnection } from "./connection";
 import { LspTransport } from "./lsp-transport";
 import { previewProvider } from "./previews";
-import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
+import { componentDescription, componentDetails, useComponent } from "./component-install";
+import {
+  formatSize,
+  InstallConfirm,
+  installing,
+  progressText,
+  useServerStatus,
+} from "./server-install";
 import type { Preview, PreviewCalls, SourceLocation } from "./previews/types";
 import { TooltipProvider, useTooltip } from "./tooltip";
 import type {
@@ -189,6 +197,14 @@ export function EditorPanel(props: EditorPanelProps) {
   const spellingCallsRef = useRef(spellingCalls);
   spellingCallsRef.current = spellingCalls;
   const [spellingMessage, setSpellingMessage] = useState<string | null>(null);
+  // Components something here needs but the host lacks, and those the user put off for this tab.
+  const [neededComponents, setNeededComponents] = useState<readonly ComponentId[]>([]);
+  const [deferredComponents, setDeferredComponents] = useState<readonly ComponentId[]>([]);
+  const requestComponent = useCallback((id: ComponentId) => {
+    setNeededComponents((ids) => (ids.includes(id) ? ids : [...ids, id]));
+  }, []);
+  const requestComponentRef = useRef(requestComponent);
+  requestComponentRef.current = requestComponent;
 
   const panel = useRef<View>(null);
   const editorHost = useRef<View>(null);
@@ -402,6 +418,7 @@ export function EditorPanel(props: EditorPanelProps) {
         theme: themeRef.current,
         invert: invertRef.current,
         jump: (location) => jumpToSourceRef.current(location),
+        requestComponent: (id) => requestComponentRef.current(id),
         openExternal: (url) => void openExternalUrl(url).catch(() => {}),
         notice: (message) => toastRef.current.show(message),
       });
@@ -438,6 +455,7 @@ export function EditorPanel(props: EditorPanelProps) {
         suggest: (word) => spellingCallsRef.current.suggest({ file: file.path, word }),
         add: (word) => spellingCallsRef.current.add({ word }),
         onStatus: setSpellingMessage,
+        onMissing: () => requestComponentRef.current("spelling"),
       } satisfies SpellingService,
       onChange: (next) => {
         text.current = next;
@@ -814,6 +832,17 @@ export function EditorPanel(props: EditorPanelProps) {
           onRetry={restart}
         />
       ) : null}
+      {neededComponents
+        .filter((id) => !deferredComponents.includes(id) && (id !== "spelling" || spellcheck))
+        .map((id) => (
+          <MissingComponent
+            key={id}
+            id={id}
+            theme={theme}
+            onReady={() => setNeededComponents((ids) => ids.filter((other) => other !== id))}
+            onDefer={() => setDeferredComponents((ids) => [...ids, id])}
+          />
+        ))}
       {server.status === "failed" || server.status === "ended" ? (
         <Banner theme={theme} danger text={server.message} testID="editor-plus-server-error">
           <TextButton
@@ -936,6 +965,58 @@ function MissingServer({
       </Banner>
       <InstallConfirm
         details={offer}
+        open={confirming}
+        theme={theme}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void install();
+        }}
+      />
+    </>
+  );
+}
+
+/** A component (PDF.js, cspell) something in the tab needs: offered for install, with consent. */
+function MissingComponent({
+  id,
+  theme,
+  onReady,
+  onDefer,
+}: {
+  id: ComponentId;
+  theme: PluginTheme;
+  onReady(): void;
+  onDefer(): void;
+}) {
+  const { status, error, install } = useComponent(id);
+  const [confirming, setConfirming] = useState(false);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+  useEffect(() => {
+    if (status?.state === "ready") onReadyRef.current();
+  }, [status?.state]);
+  if (!status || status.state === "ready") return null;
+  const info = COMPONENTS[id];
+  const downloading = status.state === "installing";
+  const failed = status.state === "failed" || !!error;
+  const text = downloading
+    ? `Downloading ${info.name} ${info.version}…`
+    : failed
+      ? `Could not download ${info.name}: ${error ?? status.error ?? "unknown error"}`
+      : `${info.neededBy} needs ${info.name} ${info.version}, downloaded from npm (${formatSize(info.installedSize)}).`;
+  return (
+    <>
+      <Banner theme={theme} danger={failed} text={text} testID={`editor-plus-component-${id}`}>
+        {!downloading ? (
+          <TextButton theme={theme} label="Install…" onPress={() => setConfirming(true)} />
+        ) : null}
+        {!downloading ? <TextButton theme={theme} label="Not now" onPress={onDefer} /> : null}
+      </Banner>
+      <InstallConfirm
+        details={componentDetails(id, status.destination)}
+        description={componentDescription(id)}
+        approximateSize
         open={confirming}
         theme={theme}
         onCancel={() => setConfirming(false)}

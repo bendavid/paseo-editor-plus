@@ -5,9 +5,9 @@ import { COMPONENTS, type ComponentId, type ComponentStatus } from "../shared/co
 import { dataRoot, npmCi } from "./installer";
 import { NPM_COMPONENTS } from "./npm";
 
-// Downloads components (shared/components.ts) into plugin-data the first time something needs
-// them. They are the plugin's own code and data, pinned by lockfile, so they install without asking;
-// the settings list them and remove them.
+// Downloads components (shared/components.ts) into plugin-data when the user confirms it, from the
+// editor's banner or the settings, which also list and remove them. Nothing here installs on its
+// own: callers ask for the status and the app asks the user.
 
 /** After a failed install, how long callers wait before an automatic retry. */
 const RETRY_AFTER_MS = 30_000;
@@ -40,7 +40,7 @@ export class Components {
 
   async status(id: ComponentId): Promise<ComponentStatus> {
     const folder = componentFolder(id);
-    const base = { id, version: COMPONENTS[id].version };
+    const base = { id, version: COMPONENTS[id].version, destination: folder };
     // The folder appears only once its install has finished (it is renamed from staging).
     if (await exists(folder)) return { ...base, state: "ready", folder, error: null };
     const job = this.jobs.get(id);

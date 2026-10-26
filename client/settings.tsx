@@ -1,4 +1,3 @@
-import type { RpcOutput } from "@getpaseo/plugin";
 import {
   type PluginSurfaceProps,
   type SettingsState,
@@ -13,17 +12,12 @@ import {
   SettingsSection,
   SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Text } from "react-native";
 import { LANGUAGES, type LanguageProfile } from "../shared/languages";
 import { COMPONENTS, type ComponentId } from "../shared/components";
-import {
-  AUTO_SAVE_MAX_MS,
-  AUTO_SAVE_MIN_MS,
-  componentStatusRpc,
-  removeComponent,
-  serverSettings,
-} from "../shared/rpc";
+import { AUTO_SAVE_MAX_MS, AUTO_SAVE_MIN_MS, removeComponent, serverSettings } from "../shared/rpc";
+import { componentDescription, componentDetails, useComponent } from "./component-install";
 import { InstallConfirm, installing, progressText, useServerStatus } from "./server-install";
 
 type ReadySettings = Extract<SettingsState<typeof serverSettings.schema>, { status: "ready" }>;
@@ -60,8 +54,8 @@ export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
       ))}
       <SettingsSection title="Downloads">
         <SettingsCard>
-          <ComponentRow id="spelling" />
-          <ComponentRow id="pdfjs" />
+          <ComponentRow id="spelling" theme={theme} />
+          <ComponentRow id="pdfjs" theme={theme} />
         </SettingsCard>
       </SettingsSection>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: 8 }}>
@@ -202,30 +196,17 @@ function ServerSection({
   );
 }
 
-type ComponentStatus = RpcOutput<typeof componentStatusRpc>;
-
-/** A component Editor Plus downloads on first use: where it is, and a way to remove it. */
-function ComponentRow({ id }: { id: ComponentId }) {
-  const fetchStatus = useRpc(componentStatusRpc);
+/** A component Editor Plus downloads when asked: where it is, and ways to install or remove it. */
+function ComponentRow({ id, theme }: { id: ComponentId; theme: PluginSurfaceProps["theme"] }) {
+  const { status, error, refresh, install } = useComponent(id);
   const remove = useRpc(removeComponent);
-  const [status, setStatus] = useState<ComponentStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const refresh = useCallback(async () => {
-    try {
-      setStatus(await fetchStatus({ id, install: false }));
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [fetchStatus, id]);
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  const [confirming, setConfirming] = useState(false);
   const info = COMPONENTS[id];
   const label = `${info.name} ${info.version}`;
+  let row;
   if (status?.state === "ready") {
-    return (
+    row = (
       <SettingsAction
         label={label}
         hint={`${info.purpose} Downloaded to ${status.folder}. ${info.license}.`}
@@ -239,17 +220,40 @@ function ComponentRow({ id }: { id: ComponentId }) {
         }}
       />
     );
+  } else if (status?.state === "installing") {
+    row = <SettingsRow label={label} hint="Downloading…" />;
+  } else {
+    row = (
+      <SettingsAction
+        label={label}
+        hint={`${info.purpose} Downloaded from npm when you install it. ${info.license}.`}
+        actionLabel="Install…"
+        disabled={!status}
+        onPress={() => setConfirming(true)}
+      />
+    );
   }
   return (
-    <SettingsRow
-      label={label}
-      hint={
-        status?.state === "installing"
-          ? "Downloading…"
-          : `${info.purpose} Downloaded from npm the first time it is needed. ${info.license}.`
-      }
-      error={error ?? (status?.state === "failed" ? status.error : null)}
-    />
+    <>
+      {row}
+      {error || status?.state === "failed" ? (
+        <SettingsRow label={label} error={error ?? status?.error ?? null} />
+      ) : null}
+      {status ? (
+        <InstallConfirm
+          details={componentDetails(id, status.destination)}
+          description={componentDescription(id)}
+          approximateSize
+          open={confirming}
+          theme={theme}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => {
+            setConfirming(false);
+            void install();
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

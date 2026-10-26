@@ -290,7 +290,8 @@ export default function contribute(server: PluginServerContext) {
   });
 
   server.handle(checkSpelling, async ({ file, words }) => {
-    const status = await components.ensure("spelling");
+    // Reports a missing cspell; the app asks the user before installing it.
+    const status = await components.status("spelling");
     if (status.state !== "ready") return { state: status.state, error: status.error, issues: [] };
     try {
       return { state: status.state, error: null, issues: await spelling.check(file, words) };

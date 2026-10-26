@@ -11,7 +11,7 @@ import { messageOf } from "./connection";
 // the user pressing Install in the confirmation.
 
 export type ServerStatus = RpcOutput<typeof serverStatus>;
-type InstallDetails = NonNullable<ServerStatus["install"]>;
+export type InstallDetails = NonNullable<ServerStatus["install"]>;
 
 /** Status polls this often while an install runs. */
 const PROGRESS_POLL_MS = 1000;
@@ -110,12 +110,18 @@ export function useServerStatus(language: string) {
 /** Asks before downloading: what, from where, how big, under what license, and where it goes. */
 export function InstallConfirm({
   details,
+  description,
+  approximateSize,
   open,
   theme,
   onCancel,
   onConfirm,
 }: {
   details: InstallDetails | null;
+  /** Replaces the language-server explanation. */
+  description?: string;
+  /** The size is roughly what it takes once installed, not the download. */
+  approximateSize?: boolean;
   open: boolean;
   theme: PluginTheme;
   onCancel(): void;
@@ -126,7 +132,12 @@ export function InstallConfirm({
   const muted = { color: theme.colors.foregroundMuted, fontSize: 13, lineHeight: 18 };
   const rows: [string, string][] = [
     ["From", details.source],
-    ["Size", details.size === null ? "Depends on the packages" : formatSize(details.size)],
+    [
+      approximateSize ? "Size once installed" : "Size",
+      details.size === null
+        ? "Depends on the packages"
+        : `${approximateSize ? "About " : ""}${formatSize(details.size)}`,
+    ],
     ["License", details.license],
     ["Into", details.destination],
   ];
@@ -145,8 +156,8 @@ export function InstallConfirm({
     >
       <Modal.Content>
         <Text style={text}>
-          Editor Plus downloads this language server onto the computer that runs the Paseo daemon
-          and runs it as your user while you edit. See {details.homepage}.
+          {description ??
+            `Editor Plus downloads this language server onto the computer that runs the Paseo daemon and runs it as your user while you edit. See ${details.homepage}.`}
         </Text>
         {rows.map(([label, value]) => (
           <View key={label} style={{ gap: 2 }}>
