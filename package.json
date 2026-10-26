@@ -2,7 +2,7 @@
   "name": "paseo-editor-plus",
   "private": true,
   "version": "0.1.0",
-  "description": "A code editor for Paseo's file tab with language servers and live previews: Typst with tinymist first.",
+  "description": "A code editor for Paseo's file tab with language servers, live previews for Typst, Markdown, and LaTeX, and spellchecking.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/bendavid/paseo-editor-plus.git"

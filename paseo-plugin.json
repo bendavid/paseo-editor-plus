@@ -1,7 +1,14 @@
 {
   "id": "editor-plus",
   "name": "Editor Plus",
-  "description": "A code editor for Paseo's file tab with language servers and live previews: Typst with tinymist first.",
+  "description": "A code editor for Paseo's file tab with language servers, live previews for Typst, Markdown, and LaTeX, and spellchecking.",
+  "translations": {
+    "zh-CN": {
+      "name": "Editor Plus 编辑器",
+      "description": "在 Paseo 的文件标签页中使用带语言服务器的代码编辑器，支持 Typst、Markdown 和 LaTeX 实时预览，以及拼写检查。"
+    }
+  },
+  "media": ["assets/screenshot-light.png", "assets/screenshot-dark.png"],
   "requirements": {
     "paseo": ">=0.13.0"
   },
