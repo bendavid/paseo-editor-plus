@@ -112,3 +112,91 @@ export async function synctexInverse(
   }
   return null;
 }
+
+export interface LogError {
+  /** The source file, absolute. */
+  file: string;
+  /** One-based, or null when TeX gave none (a fatal error at the end of the input). */
+  line: number | null;
+  message: string;
+}
+
+/** TeX wraps log lines at this many characters; a full line continues on the next. */
+const LOG_WIDTH = 79;
+/** How far after an error TeX prints its `l.<n>` context. */
+const CONTEXT_LINES = 12;
+/** Consequences of an earlier error, not errors of their own. */
+const SKIPPED = [/^Emergency stop/, /^==> Fatal error occurred/];
+
+/**
+ * The errors in a LaTeX log (`! …` lines) and where they are. TeX prints `(path` when it opens a
+ * file and `)` when it closes it, so a stack of those names the file an error is in; `l.<n>` after
+ * the error gives its line. texlab reports some of these itself, but not errors without a line
+ * (such as a file ending inside an argument) nor any for a file without `\documentclass`.
+ */
+export function parseLatexLog(text: string, root: string): LogError[] {
+  // Rejoin lines TeX wrapped, so paths and messages are whole.
+  const raw = text.split(/\r?\n/);
+  const lines: string[] = [];
+  for (let index = 0; index < raw.length; index += 1) {
+    let line = raw[index];
+    while (line.length > 0 && line.length % LOG_WIDTH === 0 && index + 1 < raw.length) {
+      index += 1;
+      line += raw[index];
+    }
+    lines.push(line);
+  }
+  const directory = dirname(root);
+  const stack: (string | null)[] = [];
+  const errors: LogError[] = [];
+  const seen = new Set<string>();
+  const currentFile = () => {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+      const entry = stack[index];
+      if (entry && /\.(tex|ltx)$/i.test(entry)) return entry;
+    }
+    return root;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.startsWith("! ")) {
+      const message = line
+        .slice(2)
+        .replace(/^LaTeX Error: /, "")
+        .trim();
+      if (SKIPPED.some((pattern) => pattern.test(message))) continue;
+      let number: number | null = null;
+      for (let next = index + 1; next < Math.min(lines.length, index + CONTEXT_LINES); next += 1) {
+        if (lines[next].startsWith("! ")) break;
+        const match = /^l\.(\d+)/.exec(lines[next]);
+        if (match) {
+          number = Number(match[1]);
+          break;
+        }
+      }
+      const file = currentFile();
+      const key = `${file}:${number}:${message}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        errors.push({ file, line: number, message });
+      }
+      continue;
+    }
+    // Track the files TeX opens and closes on this line.
+    const tokens =
+      /\((?:"([^"]+)"|((?:\.{0,2}\/|[A-Za-z]:[\\/])[^\s()]*|[^\s()/]+\.[A-Za-z]{2,4}(?=[\s()]|$)))|\(|\)/g;
+    for (const match of line.matchAll(tokens)) {
+      if (match[0] === ")") stack.pop();
+      else {
+        const path = match[1] ?? match[2];
+        stack.push(path ? (isAbsolute(path) ? path : resolve(directory, path)) : null);
+      }
+    }
+  }
+  return errors;
+}
+
+/** The log latexmk writes beside the root document. */
+export function logFor(root: string): string {
+  return root.replace(/\.(tex|ltx)$/i, "") + ".log";
+}

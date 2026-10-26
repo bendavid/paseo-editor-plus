@@ -316,3 +316,18 @@ export const addSpellingWord = defineRpc({
   input: z.object({ word }),
   output: z.object({ error: z.string().nullable() }),
 });
+
+/**
+ * The errors in the build log of a LaTeX file's root document, when the log changed since
+ * `sinceMtimeMs` (otherwise null): texlab reports only some of them.
+ */
+export const latexLog = defineRpc({
+  name: "editorplus.latex.log",
+  input: z.object({ file: z.string().min(1).max(4096), sinceMtimeMs: z.number() }),
+  output: z.object({
+    mtimeMs: z.number(),
+    errors: z
+      .array(z.object({ file: z.string(), line: z.number().int().nullable(), message: z.string() }))
+      .nullable(),
+  }),
+});

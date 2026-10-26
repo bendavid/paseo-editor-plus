@@ -148,3 +148,63 @@ describe("tinymist preview provider", () => {
     expect((requests.at(-1)![1] as { command: string }).command).toBe("tinymist.doKillPreview");
   });
 });
+
+describe("LspTransport diagnostics", () => {
+  const diagnostic = (line: number, message: string, source = "texlab") => ({
+    range: { start: { line, character: 0 }, end: { line, character: 5 } },
+    severity: 1,
+    source,
+    message,
+  });
+  const published = (received: string[]) =>
+    received
+      .map(
+        (message) =>
+          JSON.parse(message) as {
+            method?: string;
+            params: { uri: string; diagnostics: { message: string }[] };
+          },
+      )
+      .filter((message) => message.method === "textDocument/publishDiagnostics")
+      .map((message) => message.params.diagnostics.map((d) => d.message));
+
+  it("adds the panel's diagnostics to the server's, without repeating the server's", () => {
+    const { transport, received } = setup();
+    const uri = "file:///tmp/paper%20one.tex";
+    transport.receive(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "textDocument/publishDiagnostics",
+        params: { uri, version: 3, diagnostics: [diagnostic(4, "Undefined control sequence.")] },
+      }),
+    );
+    transport.setExtraDiagnostics("file:///tmp/paper one.tex", [
+      diagnostic(4, "Undefined control sequence", "LaTeX build"),
+      diagnostic(0, "Missing \\begin{document}.", "LaTeX build"),
+    ]);
+    expect(published(received).at(-1)).toEqual([
+      "Undefined control sequence.",
+      "Missing \\begin{document}.",
+    ]);
+    const last = JSON.parse(received.at(-1)!) as { params: { uri: string; version: number } };
+    expect(last.params.uri).toBe(uri);
+    expect(last.params.version).toBe(3);
+
+    // The server's next publication keeps the panel's diagnostics.
+    transport.receive(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "textDocument/publishDiagnostics",
+        params: { uri, diagnostics: [] },
+      }),
+    );
+    expect(published(received).at(-1)).toEqual([
+      "Undefined control sequence",
+      "Missing \\begin{document}.",
+    ]);
+
+    // Clearing them leaves the server's.
+    transport.setExtraDiagnostics(uri, []);
+    expect(published(received).at(-1)).toEqual([]);
+  });
+});

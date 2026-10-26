@@ -25,6 +25,7 @@ import {
   addSpellingWord,
   checkSpelling,
   closeSession,
+  latexLog,
   componentStatusRpc,
   connectPreview,
   locatePdf,
@@ -47,6 +48,7 @@ import {
 import { COMPONENTS, type ComponentId } from "../shared/components";
 import { type LanguageProfile, languageIdFor, serverOptions } from "../shared/languages";
 import { messageOf, SessionConnection } from "./connection";
+import { buildDiagnostics } from "./latex-log";
 import { LspTransport } from "./lsp-transport";
 import { previewProvider } from "./previews";
 import { componentDescription, componentDetails, useComponent } from "./component-install";
@@ -71,6 +73,8 @@ import type {
 
 /** With auto-save off, unsaved edits are kept in the tab's state this long after the last edit. */
 const DRAFT_DELAY_MS = 1000;
+/** How often a LaTeX tab checks whether a build wrote a new log. */
+const LATEX_LOG_POLL_MS = 2000;
 /** Cursor moves sent to the preview at most this often. */
 const SCROLL_INTERVAL_MS = 120;
 
@@ -228,6 +232,7 @@ export function EditorPanel(props: EditorPanelProps) {
   const session = useRef<{
     connection: SessionConnection;
     client: LanguageClient;
+    transport: LspTransport;
     fileUri: string;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -597,7 +602,7 @@ export function EditorPanel(props: EditorPanelProps) {
             `The definition is in ${baseName(pathFromUri(uri))}. Open it from Files.`,
           ),
       });
-      session.current = { connection, client, fileUri: opened.fileUri };
+      session.current = { connection, client, transport, fileUri: opened.fileUri };
       editor.current?.setLanguageClient(client, clientFile);
       try {
         await client.initializing;
@@ -623,6 +628,40 @@ export function EditorPanel(props: EditorPanelProps) {
       }
     };
   }, [compileOnSave, editorReady, file.path, language, provider, restarts, stopPreview, web]);
+
+  // --- LaTeX: the build log's errors, which texlab reports only in part (none without a line, and
+  // none for a file without \documentclass), shown with the server's problems.
+
+  const readLatexLog = useRpc(latexLog);
+  const readLatexLogRef = useRef(readLatexLog);
+  readLatexLogRef.current = readLatexLog;
+  useEffect(() => {
+    if (language.id !== "latex" || server.status !== "ready") return;
+    let since = -1;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const result = await readLatexLogRef.current({ file: file.path, sinceMtimeMs: since });
+        const current = session.current;
+        if (!stopped && result.errors && current) {
+          since = result.mtimeMs;
+          current.transport.setExtraDiagnostics(
+            current.fileUri,
+            buildDiagnostics(result.errors, file.path, text.current),
+          );
+        }
+      } catch {
+        // The next check tries again.
+      }
+      if (!stopped) timer = setTimeout(() => void check(), LATEX_LOG_POLL_MS);
+    };
+    void check();
+    return () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [file.path, language.id, server.status]);
 
   // --- Toolbar actions.
 

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
@@ -8,6 +8,8 @@ import { Components } from "./server/components";
 import { dataRoot, Installer, planInstall } from "./server/installer";
 import {
   latexRoot,
+  logFor,
+  parseLatexLog,
   pdfFor,
   synctexForward as forward,
   synctexInverse as inverse,
@@ -30,6 +32,7 @@ import {
   sendLsp,
   sendPreview,
   installServer,
+  latexLog,
   locatePdf,
   pdfjsBinary,
   pdfjsPart,
@@ -229,6 +232,19 @@ export default function contribute(server: PluginServerContext) {
   server.handle(locatePdf, async ({ file }) => {
     const root = await latexRoot(file);
     return { root, pdf: pdfFor(root) };
+  });
+
+  server.handle(latexLog, async ({ file, sinceMtimeMs }) => {
+    const log = logFor(await latexRoot(file));
+    let mtimeMs = 0;
+    try {
+      mtimeMs = (await stat(log)).mtimeMs;
+    } catch {
+      return { mtimeMs: 0, errors: mtimeMs === sinceMtimeMs ? null : [] };
+    }
+    if (mtimeMs === sinceMtimeMs) return { mtimeMs, errors: null };
+    const root = await latexRoot(file);
+    return { mtimeMs, errors: parseLatexLog(await readFile(log, "utf8"), root) };
   });
 
   server.handle(statPdf, async ({ path }) => {
