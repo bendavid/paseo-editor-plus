@@ -163,6 +163,9 @@ export const LANGUAGES: readonly LanguageProfile[] = [
       hh: "cpp",
       hpp: "cpp",
       hxx: "cpp",
+      // CUDA: VS Code's identifier; clangd goes by the extension and parses these as CUDA.
+      cu: "cuda-cpp",
+      cuh: "cuda-cpp",
     },
     icon: "FileCode",
     server: {

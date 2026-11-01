@@ -26,17 +26,17 @@ by a language server on the daemon host, with a live preview beside it where the
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
-| Language              | Extensions                                            | Server                                                                                                                     | Installs from           |
-| --------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
-| Typst                 | `typ`                                                 | [tinymist](https://github.com/Myriad-Dreamin/tinymist)                                                                     | GitHub release          |
-| Python                | `py`, `pyi`                                           | [basedpyright](https://docs.basedpyright.com)                                                                              | npm                     |
-| Rust                  | `rs`                                                  | [rust-analyzer](https://rust-analyzer.github.io)                                                                           | GitHub release          |
-| Go                    | `go`                                                  | [gopls](https://go.dev/gopls)                                                                                              | `go install` (needs Go) |
-| C/C++                 | `c`, `h`, `cc`, `cpp`, `cxx`, `hh`, `hpp`, `hxx`      | [clangd](https://clangd.llvm.org)                                                                                          | GitHub release          |
-| JavaScript/TypeScript | `js`, `mjs`, `cjs`, `jsx`, `ts`, `mts`, `cts`, `tsx`  | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) with TypeScript 5.9 | npm                     |
-| LaTeX                 | `tex`, `sty`, `cls`, `ltx`, `bib`                     | [texlab](https://github.com/latex-lsp/texlab)                                                                              | GitHub release          |
-| Markdown              | `md`, `markdown`                                      | [marksman](https://github.com/artempyanykh/marksman)                                                                       | GitHub release          |
-| JSON, CSS, HTML       | `json`, `jsonc`; `css`, `scss`, `less`; `html`, `htm` | [vscode-langservers-extracted](https://github.com/hrsh7th/vscode-langservers-extracted)                                    | npm                     |
+| Language              | Extensions                                                    | Server                                                                                                                     | Installs from           |
+| --------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Typst                 | `typ`                                                         | [tinymist](https://github.com/Myriad-Dreamin/tinymist)                                                                     | GitHub release          |
+| Python                | `py`, `pyi`                                                   | [basedpyright](https://docs.basedpyright.com)                                                                              | npm                     |
+| Rust                  | `rs`                                                          | [rust-analyzer](https://rust-analyzer.github.io)                                                                           | GitHub release          |
+| Go                    | `go`                                                          | [gopls](https://go.dev/gopls)                                                                                              | `go install` (needs Go) |
+| C/C++ and CUDA        | `c`, `h`, `cc`, `cpp`, `cxx`, `hh`, `hpp`, `hxx`, `cu`, `cuh` | [clangd](https://clangd.llvm.org)                                                                                          | GitHub release          |
+| JavaScript/TypeScript | `js`, `mjs`, `cjs`, `jsx`, `ts`, `mts`, `cts`, `tsx`          | [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) with TypeScript 5.9 | npm                     |
+| LaTeX                 | `tex`, `sty`, `cls`, `ltx`, `bib`                             | [texlab](https://github.com/latex-lsp/texlab)                                                                              | GitHub release          |
+| Markdown              | `md`, `markdown`                                              | [marksman](https://github.com/artempyanykh/marksman)                                                                       | GitHub release          |
+| JSON, CSS, HTML       | `json`, `jsonc`; `css`, `scss`, `less`; `html`, `htm`         | [vscode-langservers-extracted](https://github.com/hrsh7th/vscode-langservers-extracted)                                    | npm                     |
 
 See [OVERVIEW.md](OVERVIEW.md) for what it does from a user's point of view.
 
@@ -75,6 +75,17 @@ downloaded from, its size and license, and where it goes; nothing downloads befo
 Installs go to `$PASEO_HOME/plugin-data/editor-plus/servers/<server>/<version>/` on the daemon
 host (`~/.paseo/…` by default), the folder other Paseo plugins use for their data, with a record in
 `installed.json`. Each daemon home and each host has its own copies.
+
+CUDA files use clangd, which needs the CUDA toolkit on the daemon host (or `--cuda-path` in the
+project's compile flags). A `.cuh` header outside a `compile_commands.json` project fails with
+"expected exactly one compiler job"; a `.clangd` file in the project fixes that:
+
+```yaml
+If:
+  PathMatch: .*\.cuh
+CompileFlags:
+  Add: [-xcuda, --cuda-host-only]
+```
 
 - **GitHub releases** are pinned per platform with the SHA-256 GitHub records for each asset
   (`shared/server-releases.ts`, written by `scripts/update-servers.mjs`), checked after download.
