@@ -1,9 +1,8 @@
-import { defineRpc, defineSettings } from "@getpaseo/plugin";
+import { defineRpc, defineSettings, defineSubscription } from "@getpaseo/plugin";
 import { z } from "zod";
 
-// One editor tab is one session: a language server process on the daemon host, its preview, and
-// the queues that carry their messages to the app. Plugin calls cannot push, so the app holds a
-// poll open and the server answers it as soon as anything arrives.
+// One editor tab is one session: a language server process on the daemon host and its preview.
+// The app sends to them with calls, and their output comes back on the session's subscription.
 
 /** Paseo's own editor saves this long after the last edit. */
 export const AUTO_SAVE_DEFAULT_MS = 800;
@@ -67,32 +66,44 @@ export const openSession = defineRpc({
   ]),
 });
 
+/**
+ * Numbers a session's batches from 1, separately for the language server and the preview. The app
+ * sends a batch again when a call fails during a reconnect; the session skips a number it has
+ * already passed on, in case the first call got through.
+ */
+const batchSeq = z.number().int().min(1);
+
 /** Messages for the language server, in order. Each is one JSON-RPC message without LSP headers. */
 export const sendLsp = defineRpc({
   name: "editorplus.session.send",
-  input: z.object({ sessionId, messages: z.array(z.string().max(16_000_000)).max(1000) }),
+  input: z.object({
+    sessionId,
+    seq: batchSeq,
+    messages: z.array(z.string().max(16_000_000)).max(1000),
+  }),
   output: z.object({ alive: z.boolean() }),
 });
 
-export const previewFrame = z.object({
-  /** "text" and "binary" are WebSocket messages; "close" means the connection ended. */
-  t: z.enum(["text", "binary", "close"]),
-  /** The text, or the bytes in base64. */
-  d: z.string(),
+/**
+ * What a session sends the app, in order: the language server's messages, the preview's WebSocket
+ * messages (binary ones as raw bytes), and finally why the session ended.
+ */
+export const sessionEvents = defineSubscription({
+  name: "editorplus.session.events",
+  input: z.object({ sessionId }),
+  event: z.union([
+    z.instanceof(Uint8Array),
+    z.discriminatedUnion("type", [
+      z.object({ type: z.literal("lsp"), messages: z.array(z.string()) }),
+      z.object({ type: z.literal("preview"), text: z.string() }),
+      /** The preview's WebSocket closed. */
+      z.object({ type: z.literal("previewClosed") }),
+      /** The language server stopped; the subscription closes after this. */
+      z.object({ type: z.literal("ended"), reason: z.string() }),
+    ]),
+  ]),
 });
-export type PreviewFrame = z.infer<typeof previewFrame>;
-
-export const pollSession = defineRpc({
-  name: "editorplus.session.poll",
-  input: z.object({ sessionId, waitMs: z.number().int().min(0).max(25_000) }),
-  output: z.object({
-    alive: z.boolean(),
-    /** Why the language server stopped, with the end of its log, once it has. */
-    exit: z.string().nullable(),
-    lsp: z.array(z.string()),
-    preview: z.array(previewFrame),
-  }),
-});
+export type SessionEvent = z.input<typeof sessionEvents.event>;
 
 export const connectPreview = defineRpc({
   name: "editorplus.preview.connect",
@@ -108,7 +119,11 @@ export const connectPreview = defineRpc({
 
 export const sendPreview = defineRpc({
   name: "editorplus.preview.send",
-  input: z.object({ sessionId, messages: z.array(z.string().max(1_000_000)).max(1000) }),
+  input: z.object({
+    sessionId,
+    seq: batchSeq,
+    messages: z.array(z.string().max(1_000_000)).max(1000),
+  }),
   output: z.object({ alive: z.boolean() }),
 });
 
@@ -120,45 +135,48 @@ export const closeSession = defineRpc({
 
 const installPhase = z.enum(["downloading", "extracting", "installing", "done", "failed"]);
 
-export const serverStatus = defineRpc({
-  name: "editorplus.server.status",
-  input: z.object({ language: languageId }),
-  output: z.object({
-    path: z.string().nullable(),
-    version: z.string().nullable(),
-    /** Where the server in use was found. */
-    source: z.enum(["setting", "installed", "path", "shell", "common"]).nullable(),
-    error: z.string().nullable(),
-    /** What installing would download, when the plugin can install this server here. */
-    install: z
-      .object({
-        name: z.string(),
-        version: z.string(),
-        license: z.string(),
-        homepage: z.string(),
-        source: z.string(),
-        size: z.number().nullable(),
-        destination: z.string(),
-        needs: z.enum(["npm", "go"]).nullable(),
-      })
-      .nullable(),
-    /** Why the plugin cannot install it here, when it cannot. */
-    installUnavailable: z.string().nullable(),
-    /** The copy the plugin installed, if any. */
-    installed: z.object({ version: z.string(), folder: z.string() }).nullable(),
-    /** The latest install of this server since the daemon started. */
-    job: z
-      .object({
-        phase: installPhase,
-        received: z.number(),
-        total: z.number().nullable(),
-        error: z.string().nullable(),
-      })
-      .nullable(),
-  }),
+const serverStatusSchema = z.object({
+  path: z.string().nullable(),
+  version: z.string().nullable(),
+  /** Where the server in use was found. */
+  source: z.enum(["setting", "installed", "path", "shell", "common"]).nullable(),
+  error: z.string().nullable(),
+  /** What installing would download, when the plugin can install this server here. */
+  install: z
+    .object({
+      name: z.string(),
+      version: z.string(),
+      license: z.string(),
+      homepage: z.string(),
+      source: z.string(),
+      size: z.number().nullable(),
+      destination: z.string(),
+      needs: z.enum(["npm", "go"]).nullable(),
+    })
+    .nullable(),
+  /** Why the plugin cannot install it here, when it cannot. */
+  installUnavailable: z.string().nullable(),
+  /** The copy the plugin installed, if any. */
+  installed: z.object({ version: z.string(), folder: z.string() }).nullable(),
+  /** The latest install of this server since the daemon started. */
+  job: z
+    .object({
+      phase: installPhase,
+      received: z.number(),
+      total: z.number().nullable(),
+      error: z.string().nullable(),
+    })
+    .nullable(),
 });
 
-/** Starts installing the language's server; the app polls `serverStatus` for progress. */
+/** The language's server on the daemon host, again whenever it or its install changes. */
+export const serverStatus = defineSubscription({
+  name: "editorplus.server.status",
+  input: z.object({ language: languageId }),
+  event: serverStatusSchema,
+});
+
+/** Starts installing the language's server; `serverStatus` follows its progress. */
 export const installServer = defineRpc({
   name: "editorplus.server.install",
   input: z.object({ language: languageId }),
@@ -194,17 +212,21 @@ const pdfPath = z
   .max(4096)
   .regex(/\.pdf$/i);
 
-export const statPdf = defineRpc({
-  name: "editorplus.pdf.stat",
+/** The PDF's state now, and again whenever the build rewrites it. */
+export const pdfChanges = defineSubscription({
+  name: "editorplus.pdf.changes",
   input: z.object({ path: pdfPath }),
-  output: z.object({ exists: z.boolean(), mtimeMs: z.number(), size: z.number() }),
+  event: z.object({ exists: z.boolean(), mtimeMs: z.number(), size: z.number() }),
 });
 
-/** A built PDF, in base64 chunks: one call stays well under the relay's message limit. */
+/** Bytes of PDF per read. */
+export const PDF_CHUNK = 8 * 1024 * 1024;
+
+/** Up to `PDF_CHUNK` bytes of a built PDF from `offset`; fewer at its end. */
 export const readPdf = defineRpc({
   name: "editorplus.pdf.read",
   input: z.object({ path: pdfPath, offset: z.number().int().min(0) }),
-  output: z.object({ data: z.string(), total: z.number(), mtimeMs: z.number() }),
+  output: z.instanceof(Uint8Array),
 });
 
 const syncBox = z.object({
@@ -254,10 +276,11 @@ export const pdfjsPart = defineRpc({
 export const BINARY_KINDS = ["cMapUrl", "standardFontDataUrl", "wasmUrl"] as const;
 export type BinaryKind = (typeof BINARY_KINDS)[number];
 
+/** The file's bytes, or null when PDF.js has no such file. */
 export const pdfjsBinary = defineRpc({
   name: "editorplus.pdfjs.binary",
   input: z.object({ kind: z.enum(BINARY_KINDS), filename: z.string().min(1).max(200) }),
-  output: z.object({ base64: z.string().nullable() }),
+  output: z.union([z.instanceof(Uint8Array), z.null()]),
 });
 
 // --- Components downloaded on first use (shared/components.ts).
@@ -277,6 +300,13 @@ export const componentStatusRpc = defineRpc({
   name: "editorplus.component.status",
   input: z.object({ id: componentId, install: z.boolean(), retry: z.boolean().optional() }),
   output: componentStatus,
+});
+
+/** A component's status now, and again whenever it changes (an install starts, ends, or fails). */
+export const componentChanges = defineSubscription({
+  name: "editorplus.component.changes",
+  input: z.object({ id: componentId }),
+  event: componentStatus,
 });
 
 export const removeComponent = defineRpc({
@@ -318,16 +348,15 @@ export const addSpellingWord = defineRpc({
 });
 
 /**
- * The errors in the build log of a LaTeX file's root document, when the log changed since
- * `sinceMtimeMs` (otherwise null): texlab reports only some of them.
+ * The errors in the build log of a LaTeX file's root document, now and whenever the log changes:
+ * texlab reports only some of them.
  */
-export const latexLog = defineRpc({
+export const latexLogChanges = defineSubscription({
   name: "editorplus.latex.log",
-  input: z.object({ file: z.string().min(1).max(4096), sinceMtimeMs: z.number() }),
-  output: z.object({
-    mtimeMs: z.number(),
-    errors: z
-      .array(z.object({ file: z.string(), line: z.number().int().nullable(), message: z.string() }))
-      .nullable(),
+  input: z.object({ file: z.string().min(1).max(4096) }),
+  event: z.object({
+    errors: z.array(
+      z.object({ file: z.string(), line: z.number().int().nullable(), message: z.string() }),
+    ),
   }),
 });

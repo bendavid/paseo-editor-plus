@@ -23,6 +23,9 @@ by a language server on the daemon host, with a live preview beside it where the
   prose only: text and comments in Typst, LaTeX, and Markdown (on by default), comments in code
   (off by default), switched per file from the toolbar; right-click or Alt+Enter on an underlined
   word for suggestions and **Add to dictionary**;
+- **Send to agent** in the toolbar: the selection, or the cursor's line, goes into the message box
+  of an agent in the workspace as `path:lines`, the code, and the problems the editor shows there
+  (a failed LaTeX build's errors included); with several agents you pick one;
 - language servers found on the daemon host, or installed by the plugin when you ask, pinned and
   verified.
 
@@ -40,7 +43,9 @@ by a language server on the daemon host, with a live preview beside it where the
 
 See [OVERVIEW.md](OVERVIEW.md) for what it does from a user's point of view.
 
-Requires Paseo 0.13.0 or later. Runs in the desktop app and the web app. On iOS and Android it
+Requires Paseo 0.16.0 or later on both the app and the daemon (for plugin subscriptions and raw
+bytes). On older Paseo, install 0.1.3: `paseo plugin add github:bendavid/paseo-editor-plus --ref
+v0.1.3`. Runs in the desktop app and the web app. On iOS and Android it
 registers no file panels, so Paseo's own panels open these files without asking; its settings
 screen works there too.
 
@@ -67,7 +72,7 @@ and Paseo opens files reached from an agent's link or a search result in its own
 ## Language servers
 
 The plugin looks for each server in this order: the path set in **Settings › Plugins ›
-editor-plus › Settings**, a copy the plugin installed, the daemon's `PATH`, your login
+Editor Plus › Language servers**, a copy the plugin installed, the daemon's `PATH`, your login
 shell's `PATH`, and common install directories.
 
 When none is found, the editor offers **Install…**. A confirmation shows the version, where it is
@@ -111,7 +116,7 @@ where it can name them. Each installs with `npm ci --omit=dev --omit=optional --
 the lockfile in `server/npm/<id>/`, so it needs npm on the daemon host. The server never installs
 one on its own: when the LaTeX preview or the spellchecker finds one missing, the editor shows a
 banner, and **Install…** opens the same confirmation as for language servers (source, size,
-license, destination). **Settings › Downloads** lists, installs, and removes them.
+license, destination). The **Downloads** tab of the plugin's settings lists, installs, and removes them.
 
 Words added from the editor go to `plugin-data/editor-plus/spelling/words.txt`. cspell also reads
 the workspace's `cspell.json`, `.cspell.json`, `cspell.config.yaml`, and the like, nearest the
@@ -120,13 +125,16 @@ file, so a project's word list applies as it does in VS Code.
 ## How it works
 
 - **One language server per tab.** Opening a tab starts the language's server on the daemon host,
-  in the workspace directory, through the plugin's server code. Closing the tab stops it; a tab
-  the app stops polling (closed window, lost connection) is stopped after 90 seconds.
+  in the workspace directory, through the plugin's server code. Closing the tab stops it; a
+  session whose subscription is gone for 60 seconds (closed window, lost connection) is stopped.
 - **The language client runs in the app.** The editor uses
-  [`@codemirror/lsp-client`](https://github.com/codemirror/lsp-client). Its JSON-RPC messages travel
-  through plugin calls. Plugin calls cannot push to the app, so the app keeps one call open (up to
-  20 seconds, under the daemon's 30-second limit) that returns as soon as the server sends
-  something. Messages to the server go out one call at a time, so they arrive in order.
+  [`@codemirror/lsp-client`](https://github.com/codemirror/lsp-client). Messages to the server go
+  out as plugin calls, one at a time so they arrive in order. Everything the session sends back
+  (the server's messages, the preview's, and why it ended) arrives on one plugin subscription
+  (`editorplus.session.events`), as it happens. Paseo subscribes again after the app reconnects;
+  the daemon keeps the session's output queued while no subscription is attached, and the new one
+  takes the queue over. Paseo does not replay events, so a message in flight when the connection
+  drops is lost; restart the server from the banner if the editor stops answering.
 - **Highlighting in two layers.** A grammar in the app colours every keystroke: CodeMirror's
   official Lezer grammars, [codemirror-lang-typst](https://github.com/kxxt/codemirror-lang-typst)
   for Typst, and the legacy stex mode for LaTeX. The server's semantic tokens arrive a round trip
@@ -138,16 +146,19 @@ file, so a project's word list applies as it does in VS Code.
   over SSH, the relay, or a LAN.
   - **Typst:** tinymist serves its preview page and a WebSocket on `127.0.0.1`. The plugin server
     fetches the page and holds the WebSocket; the panel writes the page into an iframe and replaces
-    its `WebSocket` with one that travels through plugin calls. The server only connects to ports
-    the session's language server announced.
+    its `WebSocket` with one that travels through the session: the page's messages go out as plugin
+    calls, and the server's come back on the session's subscription, binary frames as raw bytes
+    (no base64). The server only connects to ports the session's language server announced.
   - **Markdown:** the plugin server renders the editor's text with markdown-it, or Marp for a
     deck, with raw HTML off, local images inlined, and `data-source-line` on block elements. The
     panel shows it in a shadow root (after removing anything executable) and uses the line marks
     to scroll with the editor and to jump back.
   - **LaTeX:** the panel shows the PDF beside the root document (`% !TEX root = …` names it for
     an included file) with PDF.js, which the plugin server serves from its download (the app has
-    no URL for it). It checks the PDF's modification time every 1.5 seconds, reads a new build in
-    chunks, and swaps it in keeping the reader's place. `synctex view` and `synctex edit` on the
+    no URL for it). The plugin server watches the PDF's folder and tells the panel when a build
+    rewrites it (`server/watch.ts`, with a check every 5 seconds for file systems whose folder
+    watches miss changes); the panel reads it as raw bytes in 8 MB chunks and swaps it in keeping
+    the reader's place. `synctex view` and `synctex edit` on the
     daemon host map lines to PDF boxes and back.
 - **Building PDFs.** Compile to PDF on save sets tinymist's `exportPdf` to `onSave`, and texlab's
   `build.onSave` with latexmk (`-pdf -interaction=nonstopmode -synctex=1`). The editor tells the
@@ -157,8 +168,13 @@ file, so a project's word list applies as it does in VS Code.
 - **LaTeX build errors come from the log too.** texlab reports a build's errors only when they
   have a line and only for documents with `\documentclass`, so a file that ends inside an argument,
   or a bare file, failed silently. `server/latex.ts` parses the root's log (following the files TeX
-  opens to attribute each error), a LaTeX tab checks it every 2 seconds, and the transport merges
-  those errors into the server's diagnostics, skipping ones texlab already reports.
+  opens to attribute each error) whenever the log changes and pushes the errors to the LaTeX tab,
+  and the transport merges them into the server's diagnostics, skipping ones texlab already
+  reports.
+- **Send to agent uses Paseo's composer API.** `client/agent-picker.tsx` lists the workspace's
+  agents on the panel's host (`useAgents`), and `client/agent-message.ts` builds the text. The
+  panel inserts it with `composers({ agentId })` and focuses that composer, which opens the
+  agent's tab. Only text goes in: plugin attachments carry text, not files.
 - **Spelling is checked by cspell on the daemon host, not by the browser.** The browser's
   spellchecker drops its marks whenever the editor redraws a span, which language-server
   highlighting and diagnostics do all the time, and checks again only where you type.
@@ -179,7 +195,7 @@ file, so a project's word list applies as it does in VS Code.
 - **Edits reach the server before saving.** The editor sends changes 120 ms after typing; a preview
   recompiles from them. A change on disk while edits are unsaved offers Reload or Overwrite.
 - **Saving.** By default a file is saved 800 ms after the last edit, as Paseo's own editor does;
-  **Settings › Editor** turns that off or sets the delay. Ctrl/Cmd+S saves at any time. With
+  The **Editor** tab of the plugin's settings turns that off or sets the delay. Ctrl/Cmd+S saves at any time. With
   auto-save off, unsaved edits are kept in the tab's state (`draft`): Paseo asks before closing a
   modified tab but the panel cannot tell that close from other unmounts, so writing on unmount
   would save edits you chose to discard. The draft survives unmounting and app reloads and goes
@@ -209,8 +225,6 @@ file, so a project's word list applies as it does in VS Code.
 - Go to definition and preview clicks that land in another file show a message instead of opening
   it: plugins cannot open a file tab at a line
   ([#7585](https://github.com/getpaseo/paseo/discussions/7585)).
-- Each update reaches the app one round trip after the server sends it, because plugin calls
-  cannot push ([#7795](https://github.com/getpaseo/paseo/discussions/7795)).
 - The client bundle is about 2 MB: Paseo does not minify plugin bundles, and the native apps load
   (but never run) the editor and its grammars. Loading them from the plugin server on web only
   would shrink it.

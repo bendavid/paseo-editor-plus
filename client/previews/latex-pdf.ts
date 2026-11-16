@@ -1,12 +1,10 @@
 import { componentMessage } from "../../shared/components";
+import { PDF_CHUNK } from "../../shared/rpc";
 import type { PreviewProvider } from "./types";
 
-// LaTeX: the PDF the build writes (latexmk through texlab, with SyncTeX), reloaded when it
-// changes, linked to the source with SyncTeX on the daemon host. It shows a built file, so it needs
-// no language server; building does.
-
-/** How often to check whether the build wrote a new PDF. */
-const CHECK_MS = 1500;
+// LaTeX: the PDF the build writes (latexmk through texlab, with SyncTeX), reloaded when the daemon
+// reports it changed, linked to the source with SyncTeX on the daemon host. It shows a built file,
+// so it needs no language server; building does.
 
 export const latexPdfPreview: PreviewProvider = {
   needsServer: false,
@@ -32,83 +30,83 @@ export const latexPdfPreview: PreviewProvider = {
         });
       },
     });
-    let shown = 0;
-    let checking = false;
+    let shown = -1;
     let destroyed = false;
     let waitingMessage = true;
+    /** The PDF's latest state; shown once PDF.js is installed and no read is under way. */
+    let latest: { exists: boolean; mtimeMs: number; size: number } | null = null;
+    let reading = false;
 
-    // PDF.js is installed into plugin-data once the user agrees; the panel's banner asks.
+    // PDF.js is installed into plugin-data once the user agrees; the panel's banner asks, and the
+    // PDF shows as soon as the install finishes.
     let runtimeReady = false;
-    const ensureRuntime = async (): Promise<boolean> => {
-      if (runtimeReady) return true;
-      const status = await calls.componentStatus({ id: "pdfjs", install: false });
+    const stopRuntime = calls.componentChanges({ id: "pdfjs" }, (status) => {
+      if (status.state === "ready") {
+        if (runtimeReady) return;
+        runtimeReady = true;
+        // Show the PDF's state again, over the download's message.
+        shown = -1;
+        void show();
+        return;
+      }
+      runtimeReady = false;
       if (status.state === "missing") {
         services.requestComponent("pdfjs");
         view.message("The LaTeX preview needs PDF.js. Install it from the banner above.");
-        return false;
+      } else {
+        view.message(componentMessage(status) ?? "");
       }
-      const message = componentMessage(status);
-      if (message) {
-        view.message(message);
-        return false;
-      }
-      runtimeReady = true;
-      return true;
-    };
+    });
 
-    const read = async (): Promise<{ bytes: Uint8Array; mtimeMs: number }> => {
-      const parts: Uint8Array[] = [];
+    const read = async (size: number): Promise<Uint8Array> => {
+      const bytes = new Uint8Array(size);
       let offset = 0;
-      let total = Infinity;
-      let mtimeMs = 0;
-      while (offset < total) {
+      while (offset < size) {
         const chunk = await calls.readPdf({ path: pdf, offset });
-        total = chunk.total;
-        mtimeMs = chunk.mtimeMs;
-        const bytes = web.decodeBase64(chunk.data);
-        if (bytes.length === 0) break;
-        parts.push(bytes);
-        offset += bytes.length;
+        if (chunk.length === 0) break;
+        // The build rewrote the file while it was read; the change that follows reads it again.
+        if (offset + chunk.length > size) throw new Error("The PDF changed while it was read.");
+        bytes.set(chunk, offset);
+        offset += chunk.length;
+        if (chunk.length < PDF_CHUNK) break;
       }
-      const bytes = new Uint8Array(offset);
-      let at = 0;
-      for (const part of parts) {
-        bytes.set(part, at);
-        at += part.length;
-      }
-      return { bytes, mtimeMs };
+      return offset === size ? bytes : bytes.subarray(0, offset);
     };
 
-    const check = async () => {
-      if (checking || destroyed) return;
-      checking = true;
+    const show = async () => {
+      if (reading || destroyed || !latest) return;
+      reading = true;
       try {
-        const info = await calls.statPdf({ path: pdf });
-        if (!info.exists) {
-          if (waitingMessage) {
-            view.message(
-              `No PDF yet (${pdf.split(/[\\/]/).pop()}). Turn on “Compile to PDF on save” in the plugin's settings, or build with the toolbar's Compile button.`,
-            );
+        while (!destroyed && latest && latest.mtimeMs !== shown) {
+          const state = latest;
+          if (!state.exists) {
+            if (waitingMessage) {
+              view.message(
+                `No PDF yet (${pdf.split(/[\\/]/).pop()}). Turn on “Compile to PDF on save” in the plugin's settings, or build with the toolbar's Compile button.`,
+              );
+            }
+            shown = state.mtimeMs;
+            break;
           }
-          return;
+          if (!runtimeReady) break;
+          const bytes = await read(state.size);
+          if (destroyed) return;
+          await view.open(bytes);
+          shown = state.mtimeMs;
+          waitingMessage = false;
         }
-        if (info.mtimeMs === shown) return;
-        if (!(await ensureRuntime())) return;
-        const { bytes, mtimeMs } = await read();
-        if (destroyed) return;
-        await view.open(bytes);
-        shown = mtimeMs;
-        waitingMessage = false;
       } catch (error) {
-        // A PDF read while latexmk writes it fails to parse; the next check reads it again.
-        if (shown === 0) view.message(`The PDF could not be shown yet: ${String(error)}`);
+        // A PDF read while latexmk writes it fails to parse; its next change reads it again.
+        if (waitingMessage) view.message(`The PDF could not be shown yet: ${String(error)}`);
       } finally {
-        checking = false;
+        reading = false;
       }
     };
-    await ensureRuntime().catch(() => false);
-    await check();
-    const timer = setInterval(() => void check(), CHECK_MS);
+
+    const stopWatching = calls.pdfChanges({ path: pdf }, (state) => {
+      latest = state;
+      void show();
+    });
 
     return {
       deliver() {},
@@ -125,12 +123,13 @@ export const latexPdfPreview: PreviewProvider = {
           });
       },
       textChanged() {},
-      saved: () => void check(),
+      saved() {},
       setInvert: (invert) => view.setInvert(invert),
       setTheme: (theme) => view.setTheme(theme),
       destroy() {
         destroyed = true;
-        clearInterval(timer);
+        stopWatching();
+        stopRuntime();
         view.destroy();
       },
     };

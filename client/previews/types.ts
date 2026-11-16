@@ -1,19 +1,24 @@
-import type { PluginTheme, RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type {
-  componentStatusRpc,
+  PluginTheme,
+  RpcInput,
+  RpcOutput,
+  SubscriptionEvent,
+  SubscriptionInput,
+} from "@getpaseo/plugin";
+import type {
+  componentChanges,
   connectPreview,
   locatePdf,
+  pdfChanges,
   pdfjsBinary,
   pdfjsPart,
-  PreviewFrame,
   readPdf,
   renderMarkdown,
-  statPdf,
   synctexForward,
   synctexInverse,
 } from "../../shared/rpc";
 import type { ComponentId } from "../../shared/components";
-import type { CharPosition, LanguageClient, WebModules } from "../web-contract";
+import type { CharPosition, LanguageClient, PreviewFrame, WebModules } from "../web-contract";
 
 /** A place in a source file, in zero-based lines and character (code point) columns. */
 export interface SourceLocation {
@@ -27,15 +32,21 @@ export interface PreviewCalls {
   connectPreview(input: RpcInput<typeof connectPreview>): Promise<RpcOutput<typeof connectPreview>>;
   renderMarkdown(input: RpcInput<typeof renderMarkdown>): Promise<RpcOutput<typeof renderMarkdown>>;
   locatePdf(input: RpcInput<typeof locatePdf>): Promise<RpcOutput<typeof locatePdf>>;
-  statPdf(input: RpcInput<typeof statPdf>): Promise<RpcOutput<typeof statPdf>>;
+  /** Follows a built PDF; returns the release. */
+  pdfChanges(
+    input: SubscriptionInput<typeof pdfChanges>,
+    event: (event: SubscriptionEvent<typeof pdfChanges>) => void,
+  ): () => void;
   readPdf(input: RpcInput<typeof readPdf>): Promise<RpcOutput<typeof readPdf>>;
   synctexForward(input: RpcInput<typeof synctexForward>): Promise<RpcOutput<typeof synctexForward>>;
   synctexInverse(input: RpcInput<typeof synctexInverse>): Promise<RpcOutput<typeof synctexInverse>>;
   pdfjsPart(input: RpcInput<typeof pdfjsPart>): Promise<RpcOutput<typeof pdfjsPart>>;
   pdfjsBinary(input: RpcInput<typeof pdfjsBinary>): Promise<RpcOutput<typeof pdfjsBinary>>;
-  componentStatus(
-    input: RpcInput<typeof componentStatusRpc>,
-  ): Promise<RpcOutput<typeof componentStatusRpc>>;
+  /** Follows a component's status; returns the release. */
+  componentChanges(
+    input: SubscriptionInput<typeof componentChanges>,
+    event: (event: SubscriptionEvent<typeof componentChanges>) => void,
+  ): () => void;
 }
 
 /** What the panel gives a preview. */

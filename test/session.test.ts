@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EditorSession } from "../server/session";
+import { SessionSink } from "./session-sink";
 
 function tinymistPath(): string | null {
   try {
@@ -15,10 +16,10 @@ function tinymistPath(): string | null {
   }
 }
 
-async function until<T>(session: EditorSession, find: (messages: string[]) => T | undefined) {
+async function until<T>(sink: SessionSink, find: (messages: string[]) => T | undefined) {
   const seen: string[] = [];
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    const result = await session.poll(2000);
+    const result = await sink.take(2000);
     seen.push(...result.lsp);
     const found = find(seen);
     if (found !== undefined) return found;
@@ -39,51 +40,61 @@ describe.runIf(tinymistPath())("EditorSession with the installed tinymist", () =
       root,
       preview: "tinymist",
     });
+    const sink = new SessionSink(session);
     const rpc = (id: number, method: string, params: unknown) =>
       JSON.stringify({ jsonrpc: "2.0", id, method, params });
-    session.sendLsp([
-      rpc(1, "initialize", {
-        processId: null,
-        rootUri: pathToFileURL(root).href,
-        capabilities: {},
-      }),
-    ]);
-    const init = await until(session, (seen) => seen.find((m) => m.includes('"id":1')));
+    session.sendLsp(
+      [
+        rpc(1, "initialize", {
+          processId: null,
+          rootUri: pathToFileURL(root).href,
+          capabilities: {},
+        }),
+      ],
+      1,
+    );
+    const init = await until(sink, (seen) => seen.find((m) => m.includes('"id":1')));
     expect(JSON.parse(init).result.capabilities.completionProvider).toBeTruthy();
-    session.sendLsp([
-      JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }),
-      JSON.stringify({
-        jsonrpc: "2.0",
-        method: "textDocument/didOpen",
-        params: {
-          textDocument: {
-            uri: pathToFileURL(file).href,
-            languageId: "typst",
-            version: 1,
-            text: "= Hello\n",
+    session.sendLsp(
+      [
+        JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }),
+        JSON.stringify({
+          jsonrpc: "2.0",
+          method: "textDocument/didOpen",
+          params: {
+            textDocument: {
+              uri: pathToFileURL(file).href,
+              languageId: "typst",
+              version: 1,
+              text: "= Hello\n",
+            },
           },
-        },
-      }),
-      rpc(2, "workspace/executeCommand", {
-        command: "tinymist.doStartPreview",
-        arguments: [["--task-id", "t1", "--data-plane-host", "127.0.0.1:0", "--no-open", file]],
-      }),
-    ]);
-    const started = await until(session, (seen) => seen.find((m) => m.includes('"id":2')));
+        }),
+        rpc(2, "workspace/executeCommand", {
+          command: "tinymist.doStartPreview",
+          arguments: [["--task-id", "t1", "--data-plane-host", "127.0.0.1:0", "--no-open", file]],
+        }),
+      ],
+      2,
+    );
+    const started = await until(sink, (seen) => seen.find((m) => m.includes('"id":2')));
     const port = JSON.parse(started).result.dataPlanePort as number;
     await expect(session.connectPreview(port + 1, false)).rejects.toThrow(
       "did not start a preview",
     );
     const html = await session.connectPreview(port, true);
     expect(html).toContain("typst-app");
-    session.sendPreview(["current"]);
+    session.sendPreview(["current"], 1);
     let frames = 0;
     for (let attempt = 0; attempt < 10 && frames === 0; attempt += 1) {
-      frames += (await session.poll(2000)).preview.filter((frame) => frame.t === "binary").length;
+      frames += (await sink.take(2000)).preview.filter(
+        (frame) => frame instanceof Uint8Array,
+      ).length;
     }
     expect(frames).toBeGreaterThan(0);
     session.close();
-    const after = await session.poll(0);
+    await sink.done;
+    const after = await sink.take(0);
     expect(after.alive).toBe(false);
   }, 60_000);
 });

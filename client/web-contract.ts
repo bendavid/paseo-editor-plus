@@ -1,5 +1,4 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import type { PreviewFrame } from "../shared/rpc";
 
 // The contract between the cross-platform panel and the web-only modules in client/web/. Keep it
 // free of DOM types: the panel is type-checked without the DOM library, and the native apps
@@ -11,10 +10,34 @@ export interface CharPosition {
   character: number;
 }
 
+/** A problem the editor shows, as an agent is told about it. */
+export interface ExcerptProblem {
+  /** One-based. */
+  line: number;
+  severity: "error" | "warning" | "info" | "hint";
+  message: string;
+  /** Who reported it, such as "texlab" or "LaTeX build". */
+  source: string | null;
+}
+
+/** The lines the selection covers (the cursor's line without one), with their problems. */
+export interface EditorExcerpt {
+  /** One-based, inclusive. */
+  startLine: number;
+  endLine: number;
+  /** The selected text; empty when nothing is selected. */
+  selection: string;
+  /** The covered lines in full. */
+  lines: string;
+  problems: ExcerptProblem[];
+}
+
 export interface CodeEditor {
   setText(text: string): void;
   reveal(start: CharPosition, end?: CharPosition | null): void;
   cursor(): CharPosition;
+  /** What the user is looking at, for sending to an agent. */
+  excerpt(): EditorExcerpt;
   /** Connects the editor to a language server; null disconnects it. */
   setLanguageClient(client: LanguageClient | null, file: LanguageClientFile | null): void;
   /** Requests semantic tokens again, when the server asks. */
@@ -99,6 +122,10 @@ export interface LanguageClientOptions {
   otherFile(uri: string): void;
 }
 
+/** A WebSocket message from a preview server, or the end of its connection. */
+export type PreviewFrame =
+  { kind: "text"; text: string } | { kind: "binary"; bytes: Uint8Array } | { kind: "closed" };
+
 export interface PreviewChannel {
   reconnect(): Promise<void>;
   send(message: string): void;
@@ -158,7 +185,7 @@ export type FetchRuntimePart = (input: {
 export type FetchBinaryData = (input: {
   kind: "cMapUrl" | "standardFontDataUrl" | "wasmUrl";
   filename: string;
-}) => Promise<{ base64: string | null }>;
+}) => Promise<Uint8Array | null>;
 
 export interface PdfPreviewOptions {
   theme: PluginTheme;
@@ -200,7 +227,6 @@ export interface SplitDockOptions extends SplitDragOptions {
 export interface WebModules {
   resizeSplit(options: SplitResizeOptions): void;
   dockSplit(options: SplitDockOptions): void;
-  decodeBase64(base64: string): Uint8Array;
   mountDocumentPreview(parent: unknown, options: DocumentPreviewOptions): DocumentPreviewView;
   mountPdfPreview(parent: unknown, options: PdfPreviewOptions): PdfPreviewView;
   createEditor(options: CodeEditorOptions): CodeEditor;

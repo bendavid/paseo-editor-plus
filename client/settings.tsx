@@ -30,38 +30,58 @@ const SOURCES: Record<string, string> = {
   common: "a common install directory",
 };
 
-/** One section per language: the server in use, and a path to override it. */
-export function EditorPlusSettings({ theme }: PluginSurfaceProps) {
+// Three settings screens, which Paseo shows as tabs: the editor, the language servers, and the
+// downloaded components.
+
+/** Shown while the settings load, or when they cannot be read. */
+function SettingsUnavailable({
+  settings,
+}: {
+  settings: SettingsState<typeof serverSettings.schema>;
+}) {
+  return (
+    <SettingsSection title="Settings">
+      <SettingsCard>
+        <SettingsRow
+          label="Settings"
+          hint={settings.status === "loading" ? "Loading…" : undefined}
+          error={"error" in settings ? settings.error : null}
+        />
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+export function EditorSettings() {
   const settings = useSettings(serverSettings);
-  if (settings.status !== "ready") {
-    return (
-      <SettingsSection title="Settings">
-        <SettingsCard>
-          <SettingsRow
-            label="Settings"
-            hint={settings.status === "loading" ? "Loading…" : undefined}
-            error={"error" in settings ? settings.error : null}
-          />
-        </SettingsCard>
-      </SettingsSection>
-    );
-  }
+  if (settings.status !== "ready") return <SettingsUnavailable settings={settings} />;
+  return <EditorSection settings={settings} />;
+}
+
+/** One section per language: the server in use, and a path to override it. */
+export function ServerSettings({ theme }: PluginSurfaceProps) {
+  const settings = useSettings(serverSettings);
+  if (settings.status !== "ready") return <SettingsUnavailable settings={settings} />;
   return (
     <>
-      <EditorSection settings={settings} />
       {LANGUAGES.map((language) => (
         <ServerSection key={language.id} language={language} settings={settings} theme={theme} />
       ))}
-      <SettingsSection title="Downloads">
-        <SettingsCard>
-          <ComponentRow id="spelling" theme={theme} />
-          <ComponentRow id="pdfjs" theme={theme} />
-        </SettingsCard>
-      </SettingsSection>
       <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12, marginTop: 8 }}>
         Each open editor tab runs its own language server on the daemon host while it is open.
       </Text>
     </>
+  );
+}
+
+export function DownloadSettings({ theme }: PluginSurfaceProps) {
+  return (
+    <SettingsSection title="Downloads">
+      <SettingsCard>
+        <ComponentRow id="spelling" theme={theme} />
+        <ComponentRow id="pdfjs" theme={theme} />
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 
@@ -74,7 +94,7 @@ function ServerSection({
   settings: ReadySettings;
   theme: PluginSurfaceProps["theme"];
 }) {
-  const { status, error, refresh, install, uninstall } = useServerStatus(language.id);
+  const { status, error, install, uninstall } = useServerStatus(language.id);
   const [draft, setDraft] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const { name, binary } = language.server;
@@ -94,10 +114,8 @@ function ServerSection({
       ...settings.values.servers,
       [language.id]: { ...entry, path: draft.trim() },
     };
-    if (await settings.save({ ...settings.values, servers }, settings.revision)) {
-      setDraft(null);
-      void refresh();
-    }
+    // The status follows the new path once the settings change.
+    if (await settings.save({ ...settings.values, servers }, settings.revision)) setDraft(null);
   };
   let found = "Checking…";
   if (status?.path) {
@@ -198,7 +216,7 @@ function ServerSection({
 
 /** A component Editor Plus downloads when asked: where it is, and ways to install or remove it. */
 function ComponentRow({ id, theme }: { id: ComponentId; theme: PluginSurfaceProps["theme"] }) {
-  const { status, error, refresh, install } = useComponent(id);
+  const { status, error, install } = useComponent(id);
   const remove = useRpc(removeComponent);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -214,9 +232,7 @@ function ComponentRow({ id, theme }: { id: ComponentId; theme: PluginSurfaceProp
         disabled={busy}
         onPress={() => {
           setBusy(true);
-          void remove({ id })
-            .then(refresh)
-            .finally(() => setBusy(false));
+          void remove({ id }).finally(() => setBusy(false));
         }}
       />
     );

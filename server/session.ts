@@ -1,6 +1,6 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import type { PreviewFrame } from "../shared/rpc";
 import type { PreviewKind } from "../shared/languages";
+import type { SessionEvent } from "../shared/rpc";
 import { frameLspMessage, LspMessageReader } from "./framing";
 import { announcedPreviewPorts } from "./previews";
 
@@ -10,19 +10,21 @@ const EXIT_GRACE_MS = 2000;
 const LOG_LINES = 20;
 const NOTEWORTHY = /\b(ERROR|WARN)\b|panicked/;
 /**
- * Preview data held for an app that stopped polling. Past this the frames are dropped and the
- * preview reconnects, which makes the server send the whole document again.
+ * Preview data held while no app is attached, or while it falls behind. Past this the frames are
+ * dropped and the preview reconnects, which makes the server send the whole document again.
  */
 const MAX_QUEUED_PREVIEW_BYTES = 64 * 1024 * 1024;
-/** After a message arrives, wait this long for more before answering a poll. */
+/** After a message arrives, wait this long for more so that they go out together. */
 const BATCH_MS = 8;
 
-export interface PollResult {
-  alive: boolean;
-  exit: string | null;
-  lsp: string[];
-  preview: PreviewFrame[];
-}
+/** A preview WebSocket message, or the connection's end. */
+type PreviewItem =
+  | { kind: "text"; text: string }
+  | { kind: "binary"; bytes: Uint8Array<ArrayBuffer> }
+  | { kind: "closed" };
+
+/** Sends one event to the attached app; resolves once it has left the plugin process. */
+export type PushEvent = (event: SessionEvent) => Promise<void>;
 
 export interface SessionOptions {
   id: string;
@@ -36,15 +38,24 @@ export interface SessionOptions {
   preview: PreviewKind | null;
 }
 
-/** One language server process and its preview connection, for one editor tab. */
+/**
+ * One language server process and its preview connection, for one editor tab. Output waits in
+ * queues until the tab's subscription is attached (`attach`), which also carries it across the
+ * app reconnecting: Paseo subscribes again, and the new subscription takes the queues over.
+ */
 export class EditorSession {
   readonly id: string;
-  /** When the app last polled; sessions it abandons are closed. */
-  lastSeen = Date.now();
+  /** Since when no subscription is attached; null while one is. Detached sessions are reaped. */
+  detachedSince: number | null = Date.now();
   private readonly process: ChildProcessWithoutNullStreams;
   private readonly reader = new LspMessageReader();
   private lsp: string[] = [];
-  private preview: PreviewFrame[] = [];
+  private preview: PreviewItem[] = [];
+  /** The attached subscription. */
+  private subscriber: symbol | null = null;
+  /** The last batch numbers passed on (see `sendLsp`). */
+  private lspSeq = 0;
+  private previewSeq = 0;
   private previewBytes = 0;
   private waiters: (() => void)[] = [];
   private exitReason: string | null = null;
@@ -95,36 +106,62 @@ export class EditorSession {
     return this.exitReason === null;
   }
 
-  sendLsp(messages: readonly string[]): boolean {
+  /** Passes a batch to the language server, unless batch `seq` already was (a resent call). */
+  sendLsp(messages: readonly string[], seq: number): boolean {
     if (!this.alive) return false;
+    if (seq <= this.lspSeq) return true;
+    this.lspSeq = seq;
     for (const message of messages) this.process.stdin.write(frameLspMessage(message));
     return true;
   }
 
-  /** Answers with whatever is queued, waiting up to `waitMs` for something to arrive. */
-  async poll(waitMs: number): Promise<PollResult> {
-    this.lastSeen = Date.now();
-    if (!this.hasOutput() && this.alive && waitMs > 0) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, waitMs);
-        function done() {
-          clearTimeout(timer);
-          resolve();
+  /**
+   * Sends the session's output to a subscription until `signal` aborts, another subscription
+   * attaches, or the session ends; then resolves, after an "ended" event in the last case.
+   */
+  async attach(push: PushEvent, signal: AbortSignal): Promise<void> {
+    const token = Symbol("subscriber");
+    this.subscriber = token;
+    this.detachedSince = null;
+    // A pump still waiting for an earlier subscription stops.
+    this.wake();
+    const current = () => !signal.aborted && this.subscriber === token;
+    try {
+      while (current()) {
+        if (!this.hasOutput()) {
+          if (!this.alive) {
+            await push({ type: "ended", reason: this.exitReason ?? "The session ended." });
+            return;
+          }
+          await this.nextOutput(signal);
+          continue;
         }
-        this.waiters.push(done);
-      });
+        const lsp = this.lsp;
+        const preview = this.preview;
+        this.lsp = [];
+        this.preview = [];
+        this.previewBytes = 0;
+        if (lsp.length > 0) {
+          if (!current()) {
+            this.requeue(lsp, preview);
+            return;
+          }
+          await push({ type: "lsp", messages: lsp });
+        }
+        for (let index = 0; index < preview.length; index += 1) {
+          if (!current()) {
+            this.requeue([], preview.slice(index));
+            return;
+          }
+          await push(previewEvent(preview[index]));
+        }
+      }
+    } finally {
+      if (this.subscriber === token) {
+        this.subscriber = null;
+        this.detachedSince = Date.now();
+      }
     }
-    this.lastSeen = Date.now();
-    const result: PollResult = {
-      alive: this.alive,
-      exit: this.exitReason,
-      lsp: this.lsp,
-      preview: this.preview,
-    };
-    this.lsp = [];
-    this.preview = [];
-    this.previewBytes = 0;
-    return result;
   }
 
   /**
@@ -156,22 +193,24 @@ export class EditorSession {
     socket.onerror = null;
     socket.onmessage = (event: MessageEvent) => {
       if (this.socket !== socket) return;
-      const frame: PreviewFrame =
+      this.queuePreview(
         typeof event.data === "string"
-          ? { t: "text", d: event.data }
-          : { t: "binary", d: Buffer.from(event.data as ArrayBuffer).toString("base64") };
-      this.queuePreview(frame);
+          ? { kind: "text", text: event.data }
+          : { kind: "binary", bytes: new Uint8Array(event.data as ArrayBuffer) },
+      );
     };
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = null;
-      this.queuePreview({ t: "close", d: "" });
+      this.queuePreview({ kind: "closed" });
     };
     return html;
   }
 
-  sendPreview(messages: readonly string[]): boolean {
+  sendPreview(messages: readonly string[], seq: number): boolean {
     if (!this.alive) return false;
+    if (seq <= this.previewSeq) return true;
+    this.previewSeq = seq;
     const socket = this.socket;
     if (socket && socket.readyState === socket.OPEN) {
       for (const message of messages) socket.send(message);
@@ -204,15 +243,15 @@ export class EditorSession {
     this.wake();
   }
 
-  private queuePreview(frame: PreviewFrame): void {
-    this.previewBytes += frame.d.length;
+  private queuePreview(item: PreviewItem): void {
+    this.previewBytes += itemSize(item);
     if (this.previewBytes > MAX_QUEUED_PREVIEW_BYTES) {
       // The app is not keeping up. Start over from a fresh connection.
-      this.preview = [{ t: "close", d: "" }];
+      this.preview = [{ kind: "closed" }];
       this.previewBytes = 0;
       this.disconnectPreview();
     } else {
-      this.preview.push(frame);
+      this.preview.push(item);
     }
     this.wake();
   }
@@ -234,6 +273,25 @@ export class EditorSession {
     this.wake();
   }
 
+  /** Puts output a subscription did not send back at the front of the queues. */
+  private requeue(lsp: string[], preview: PreviewItem[]): void {
+    this.lsp = [...lsp, ...this.lsp];
+    this.preview = [...preview, ...this.preview];
+    this.previewBytes = this.preview.reduce((total, item) => total + itemSize(item), 0);
+  }
+
+  /** Resolves when output arrives, the session ends, another subscription attaches, or `signal` aborts. */
+  private nextOutput(signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      signal.addEventListener("abort", done, { once: true });
+      this.waiters.push(done);
+    });
+  }
+
   private hasOutput(): boolean {
     return this.lsp.length > 0 || this.preview.length > 0;
   }
@@ -246,5 +304,21 @@ export class EditorSession {
     setTimeout(() => {
       for (const waiter of waiters) waiter();
     }, BATCH_MS);
+  }
+}
+
+function itemSize(item: PreviewItem): number {
+  return item.kind === "text" ? item.text.length : item.kind === "binary" ? item.bytes.length : 0;
+}
+
+/** Binary messages travel as raw bytes; everything else as JSON. */
+function previewEvent(item: PreviewItem): SessionEvent {
+  switch (item.kind) {
+    case "binary":
+      return item.bytes;
+    case "text":
+      return { type: "preview", text: item.text };
+    case "closed":
+      return { type: "previewClosed" };
   }
 }

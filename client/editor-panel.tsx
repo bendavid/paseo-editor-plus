@@ -25,31 +25,33 @@ import {
   addSpellingWord,
   checkSpelling,
   closeSession,
-  latexLog,
-  componentStatusRpc,
+  componentChanges,
   connectPreview,
+  latexLogChanges,
   locatePdf,
   openSession,
+  pdfChanges,
   pdfjsBinary,
   pdfjsPart,
-  pollSession,
-  type PreviewFrame,
   readPdf,
   renderMarkdown,
   sendLsp,
   sendPreview,
+  sessionEvents,
   AUTO_SAVE_DEFAULT_MS,
   serverSettings,
-  statPdf,
   suggestSpelling,
   synctexForward,
   synctexInverse,
 } from "../shared/rpc";
 import { COMPONENTS, type ComponentId } from "../shared/components";
 import { type LanguageProfile, languageIdFor, serverOptions } from "../shared/languages";
+import { agentMessage, displayPath } from "./agent-message";
+import { AgentPicker, useWorkspaceAgents } from "./agent-picker";
 import { messageOf, SessionConnection } from "./connection";
 import { buildDiagnostics } from "./latex-log";
 import { LspTransport } from "./lsp-transport";
+import { pluginClient } from "./plugin-client";
 import { previewProvider } from "./previews";
 import { componentDescription, componentDetails, useComponent } from "./component-install";
 import {
@@ -67,14 +69,15 @@ import type {
   DockSide,
   ProblemCounts,
   LanguageClient,
+  PreviewFrame,
   SpellingService,
   WebModules,
 } from "./web-contract";
 
+/** After a save fails for another reason than a conflict, auto-save tries again this long after. */
+const SAVE_RETRY_MS = 3000;
 /** With auto-save off, unsaved edits are kept in the tab's state this long after the last edit. */
 const DRAFT_DELAY_MS = 1000;
-/** How often a LaTeX tab checks whether a build wrote a new log. */
-const LATEX_LOG_POLL_MS = 2000;
 /** Cursor moves sent to the preview at most this often. */
 const SCROLL_INTERVAL_MS = 120;
 
@@ -134,7 +137,8 @@ export interface EditorPanelProps extends PluginFilePanelProps {
 }
 
 export function EditorPanel(props: EditorPanelProps) {
-  const { file, tab, theme, workspaceId, layout, params, revision, openSettings, language } = props;
+  const { file, tab, theme, workspaceId, layout, params, revision, openSettings, language, host } =
+    props;
   const provider = useMemo(() => previewProvider(language.preview), [language.preview]);
   const serverName = language.server.name;
   const { setModified } = tab;
@@ -174,7 +178,6 @@ export function EditorPanel(props: EditorPanelProps) {
   const calls = {
     open: useRpc(openSession),
     send: useRpc(sendLsp),
-    poll: useRpc(pollSession),
     sendPreview: useRpc(sendPreview),
     close: useRpc(closeSession),
   };
@@ -184,13 +187,13 @@ export function EditorPanel(props: EditorPanelProps) {
     connectPreview: useRpc(connectPreview),
     renderMarkdown: useRpc(renderMarkdown),
     locatePdf: useRpc(locatePdf),
-    statPdf: useRpc(statPdf),
+    pdfChanges: (input, event) => pluginClient().subscribe(pdfChanges, input, event),
     readPdf: useRpc(readPdf),
     synctexForward: useRpc(synctexForward),
     synctexInverse: useRpc(synctexInverse),
     pdfjsPart: useRpc(pdfjsPart),
     pdfjsBinary: useRpc(pdfjsBinary),
-    componentStatus: useRpc(componentStatusRpc),
+    componentChanges: (input, event) => pluginClient().subscribe(componentChanges, input, event),
   };
   const previewCallsRef = useRef(previewCalls);
   previewCallsRef.current = previewCalls;
@@ -264,10 +267,10 @@ export function EditorPanel(props: EditorPanelProps) {
     saveTimer.current = undefined;
     if (draftTimer.current !== undefined) clearTimeout(draftTimer.current);
     if (autoSaveRef.current.on === true) {
-      saveTimer.current = setTimeout(
-        () => void saveRef.current(false),
-        autoSaveRef.current.delayMs,
-      );
+      saveTimer.current = setTimeout(() => {
+        saveTimer.current = undefined;
+        void saveRef.current(false);
+      }, autoSaveRef.current.delayMs);
     } else {
       // Off, or not known yet: keep the edits with the tab until it is.
       draftTimer.current = setTimeout(() => storeDraft(unsaved.current), DRAFT_DELAY_MS);
@@ -312,7 +315,16 @@ export function EditorPanel(props: EditorPanelProps) {
       } catch (cause) {
         if (cause instanceof PluginFileConflictError) setFileState("conflict");
         else if (cause instanceof PluginFileDeletedError) setFileState("deleted");
-        else setFileError(messageOf(cause));
+        else {
+          setFileError(messageOf(cause));
+          // Most often the app is reconnecting: auto-save tries again until it gets through.
+          if (autoSaveRef.current.on === true && saveTimer.current === undefined) {
+            saveTimer.current = setTimeout(() => {
+              saveTimer.current = undefined;
+              void saveRef.current(false);
+            }, SAVE_RETRY_MS);
+          }
+        }
         return;
       }
       if (unsaved.current === next) {
@@ -554,9 +566,12 @@ export function EditorPanel(props: EditorPanelProps) {
       const connection = new SessionConnection(
         {
           send: (input) => callsRef.current.send(input),
-          poll: (input) => callsRef.current.poll(input),
           sendPreview: (input) => callsRef.current.sendPreview(input),
           close: (input) => callsRef.current.close(input),
+          subscribe: (sessionId, event, closed) =>
+            pluginClient().subscribe(sessionEvents, { sessionId }, event, {
+              onClosed: ({ error }) => closed(error),
+            }),
         },
         opened.sessionId,
         {
@@ -632,35 +647,16 @@ export function EditorPanel(props: EditorPanelProps) {
   // --- LaTeX: the build log's errors, which texlab reports only in part (none without a line, and
   // none for a file without \documentclass), shown with the server's problems.
 
-  const readLatexLog = useRpc(latexLog);
-  const readLatexLogRef = useRef(readLatexLog);
-  readLatexLogRef.current = readLatexLog;
   useEffect(() => {
     if (language.id !== "latex" || server.status !== "ready") return;
-    let since = -1;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const check = async () => {
-      try {
-        const result = await readLatexLogRef.current({ file: file.path, sinceMtimeMs: since });
-        const current = session.current;
-        if (!stopped && result.errors && current) {
-          since = result.mtimeMs;
-          current.transport.setExtraDiagnostics(
-            current.fileUri,
-            buildDiagnostics(result.errors, file.path, text.current),
-          );
-        }
-      } catch {
-        // The next check tries again.
-      }
-      if (!stopped) timer = setTimeout(() => void check(), LATEX_LOG_POLL_MS);
-    };
-    void check();
-    return () => {
-      stopped = true;
-      if (timer !== undefined) clearTimeout(timer);
-    };
+    return pluginClient().subscribe(latexLogChanges, { file: file.path }, ({ errors }) => {
+      const current = session.current;
+      if (!current) return;
+      current.transport.setExtraDiagnostics(
+        current.fileUri,
+        buildDiagnostics(errors, file.path, text.current),
+      );
+    });
   }, [file.path, language.id, server.status]);
 
   // --- Toolbar actions.
@@ -685,6 +681,47 @@ export function EditorPanel(props: EditorPanelProps) {
   const restart = useCallback(() => setRestarts((count) => count + 1), []);
   const reload = useCallback(() => void load(false), [load]);
   const overwrite = useCallback(() => void save(true), [save]);
+
+  // --- Send to agent: the selection (or the cursor's line) and its problems, into the message box of
+  // an agent working in this workspace.
+
+  const agents = useWorkspaceAgents(host.id, workspaceId);
+  const [pickingAgent, setPickingAgent] = useState(false);
+  const sendTo = useCallback(
+    async (agentId: string) => {
+      setPickingAgent(false);
+      const excerpt = editor.current?.excerpt();
+      const [composer] = pluginClient().composers({ agentId });
+      if (!excerpt) return;
+      if (!composer) {
+        toastRef.current.error("That agent is no longer running.");
+        return;
+      }
+      composer.insertText(
+        agentMessage({
+          path: displayPath(file.path, workspaceDirRef.current),
+          language: file.extension,
+          excerpt,
+          prompt: composer.prompt,
+        }),
+      );
+      try {
+        await composer.focus();
+      } catch (cause) {
+        toastRef.current.error(messageOf(cause));
+      }
+    },
+    [file.extension, file.path],
+  );
+  const sendToAgent = useCallback(() => {
+    if (agents.length === 0) {
+      toastRef.current.show("No agent is running in this workspace. Start one, then send again.");
+    } else if (agents.length === 1) {
+      void sendTo(agents[0].id);
+    } else {
+      setPickingAgent(true);
+    }
+  }, [agents, sendTo]);
 
   const setViewRef = useRef(setView);
   setViewRef.current = setView;
@@ -800,6 +837,14 @@ export function EditorPanel(props: EditorPanelProps) {
               selected={spellcheck}
               onPress={toggleSpellcheck}
             />
+            <IconButton
+              theme={theme}
+              icon="MessageSquareShare"
+              label="Send to agent"
+              tooltip="Send the selection, or the cursor's line, with its problems to an agent"
+              disabled={fileState === "loading"}
+              onPress={sendToAgent}
+            />
             {language.compile ? (
               <IconButton
                 theme={theme}
@@ -859,6 +904,13 @@ export function EditorPanel(props: EditorPanelProps) {
           </View>
         </View>
       </TooltipProvider>
+      <AgentPicker
+        open={pickingAgent}
+        agents={agents}
+        theme={theme}
+        onPick={(agentId) => void sendTo(agentId)}
+        onClose={() => setPickingAgent(false)}
+      />
       {fileState === "conflict" ? (
         <Banner theme={theme} testID="editor-plus-conflict" text="The file changed on disk.">
           <TextButton theme={theme} label="Reload" onPress={reload} />

@@ -1,65 +1,40 @@
-import type { RpcOutput } from "@getpaseo/plugin";
-import { useRpc } from "@getpaseo/plugin/client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { SubscriptionEvent } from "@getpaseo/plugin";
+import { useRpc, useSubscription } from "@getpaseo/plugin/client";
+import { useCallback, useState } from "react";
 import { COMPONENTS, type ComponentId } from "../shared/components";
-import { componentStatusRpc } from "../shared/rpc";
+import { componentChanges, componentStatusRpc } from "../shared/rpc";
 import { messageOf } from "./connection";
 import type { InstallDetails } from "./server-install";
 
-// Components (PDF.js, cspell) install when the user confirms, like language servers: this keeps a
-// component's status fresh and installs it on request.
+// Components (PDF.js, cspell) install when the user confirms, like language servers: this follows a
+// component's status, which the daemon pushes as it changes, and installs it on request.
 
-export type ComponentStatus = RpcOutput<typeof componentStatusRpc>;
-
-/** Status polls this often while a component downloads. */
-const POLL_MS = 1000;
+export type ComponentStatus = SubscriptionEvent<typeof componentChanges>;
 
 export function useComponent(id: ComponentId) {
-  const fetchStatus = useRpc(componentStatusRpc);
+  const ensure = useRpc(componentStatusRpc);
   const [status, setStatus] = useState<ComponentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  const refresh = useCallback(async () => {
-    try {
-      const next = await fetchStatus({ id, install: false });
-      if (alive.current) {
-        setStatus(next);
-        setError(null);
-      }
-    } catch (cause) {
-      if (alive.current) setError(messageOf(cause));
-    }
-  }, [fetchStatus, id]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (status?.state !== "installing") return;
-    const timer = setTimeout(() => void refresh(), POLL_MS);
-    return () => clearTimeout(timer);
-  }, [refresh, status]);
+  const subscription = useSubscription(componentChanges, { id }, (next) => {
+    setStatus(next);
+    setError(null);
+  });
 
   /** Only after the user confirmed. */
   const install = useCallback(async () => {
     setError(null);
     try {
-      const next = await fetchStatus({ id, install: true, retry: true });
-      if (alive.current) setStatus(next);
+      await ensure({ id, install: true, retry: true });
     } catch (cause) {
-      if (alive.current) setError(messageOf(cause));
+      setError(messageOf(cause));
     }
-  }, [fetchStatus, id]);
+  }, [ensure, id]);
 
-  return { status, error, refresh, install };
+  return {
+    status,
+    error: error ?? (subscription.status === "error" ? subscription.error.message : null),
+    install,
+  };
 }
 
 /** What the install confirmation shows for a component. */

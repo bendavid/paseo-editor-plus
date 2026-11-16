@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { SEMANTIC_TOKENS_CAPABILITY } from "../client/web/semantic-tokens";
 import { LANGUAGES, languageIdFor } from "../shared/languages";
+import { SessionSink } from "./session-sink";
 
 // Installs every language's server into a temporary PASEO_HOME, runs it the way the plugin
 // does, and checks it answers a real editor session. Run with EDITOR_PLUS_NETWORK_TESTS=1;
@@ -86,16 +87,19 @@ describe.runIf(enabled)("every language's server", () => {
         root,
         preview: language.preview,
       });
+      const sink = new SessionSink(session);
+      let seq = 0;
+      const send = (messages: string[]) => session.sendLsp(messages, ++seq);
       const seen: string[] = [];
       const answer = async (id: number) => {
         for (let attempt = 0; attempt < 60; attempt += 1) {
-          const { lsp, alive, exit } = await session.poll(1000);
+          const { lsp, alive, exit } = await sink.take(1000);
           seen.push(...lsp);
           for (const message of lsp) {
             const parsed = JSON.parse(message) as { id?: number; method?: string };
             // Answer the server's own requests, as the panel's transport does.
             if (parsed.method && parsed.id !== undefined) {
-              session.sendLsp([
+              send([
                 JSON.stringify({
                   jsonrpc: "2.0",
                   id: parsed.id,
@@ -113,7 +117,7 @@ describe.runIf(enabled)("every language's server", () => {
         throw new Error(`no answer to ${id}`);
       };
       const uri = pathToFileURL(file).href;
-      session.sendLsp([
+      send([
         JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
@@ -136,7 +140,7 @@ describe.runIf(enabled)("every language's server", () => {
       const init = await answer(1);
       expect(init.error, JSON.stringify(init.error)).toBeUndefined();
       const capabilities = init.result.capabilities;
-      session.sendLsp([
+      send([
         JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} }),
         JSON.stringify({
           jsonrpc: "2.0",
@@ -153,7 +157,7 @@ describe.runIf(enabled)("every language's server", () => {
       ]);
       let checked = "initialize";
       if (capabilities.semanticTokensProvider?.full) {
-        session.sendLsp([
+        send([
           JSON.stringify({
             jsonrpc: "2.0",
             id: 2,
@@ -165,7 +169,7 @@ describe.runIf(enabled)("every language's server", () => {
         expect(tokens.error, JSON.stringify(tokens.error)).toBeUndefined();
         checked = `semantic tokens (${(tokens.result?.data?.length ?? 0) / 5})`;
       } else if (capabilities.documentSymbolProvider) {
-        session.sendLsp([
+        send([
           JSON.stringify({
             jsonrpc: "2.0",
             id: 2,

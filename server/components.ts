@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { COMPONENTS, type ComponentId, type ComponentStatus } from "../shared/components";
+import { Changes } from "./changes";
 import { dataRoot, npmCi } from "./installer";
 import { NPM_COMPONENTS } from "./npm";
 
@@ -35,6 +36,8 @@ interface Job {
 
 export class Components {
   private readonly jobs = new Map<ComponentId, Job>();
+  /** A component's install started, finished, failed, or was removed. */
+  readonly changes = new Changes<ComponentId>();
 
   constructor(private readonly findNpm: () => Promise<string | null>) {}
 
@@ -73,20 +76,24 @@ export class Components {
     await this.jobs.get(id)?.promise;
     await rm(join(componentsRoot(), id), { recursive: true, force: true });
     this.jobs.delete(id);
+    this.changes.emit(id);
   }
 
   private start(id: ComponentId): void {
     const job: Job = { promise: Promise.resolve(), error: null, failedAt: 0 };
-    job.promise = this.install(id).then(
-      () => {
-        this.jobs.delete(id);
-      },
-      (error: unknown) => {
-        job.error = error instanceof Error ? error.message : String(error);
-        job.failedAt = Date.now();
-      },
-    );
+    job.promise = this.install(id)
+      .then(
+        () => {
+          this.jobs.delete(id);
+        },
+        (error: unknown) => {
+          job.error = error instanceof Error ? error.message : String(error);
+          job.failedAt = Date.now();
+        },
+      )
+      .finally(() => this.changes.emit(id));
     this.jobs.set(id, job);
+    this.changes.emit(id);
   }
 
   private async install(id: ComponentId): Promise<void> {

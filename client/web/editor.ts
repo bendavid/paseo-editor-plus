@@ -54,6 +54,7 @@ import type {
   CharPosition,
   CodeEditor,
   CodeEditorOptions,
+  ExcerptProblem,
   LanguageClient,
   LanguageClientFile,
   LanguageClientOptions,
@@ -326,6 +327,33 @@ export function createEditor(options: CodeEditorOptions): CodeEditor {
     },
     cursor() {
       return charPosition(view.state, view.state.selection.main.head);
+    },
+    excerpt() {
+      const { state } = view;
+      const range = state.selection.main;
+      const first = state.doc.lineAt(range.from);
+      // A selection that ends at the start of a line does not cover that line.
+      const last = state.doc.lineAt(
+        range.empty || range.to === first.from ? range.to : Math.max(range.from, range.to - 1),
+      );
+      const problems: ExcerptProblem[] = [];
+      forEachDiagnostic(state, (diagnostic, from) => {
+        const line = state.doc.lineAt(Math.min(from, state.doc.length)).number;
+        if (line < first.number || line > last.number) return;
+        problems.push({
+          line,
+          severity: diagnostic.severity,
+          message: diagnostic.message,
+          source: diagnostic.source ?? null,
+        });
+      });
+      return {
+        startLine: first.number,
+        endLine: last.number,
+        selection: state.sliceDoc(range.from, range.to),
+        lines: state.sliceDoc(first.from, last.to),
+        problems,
+      };
     },
     setLanguageClient(client, file: LanguageClientFile | null) {
       const lsp = (client as (LanguageClient & { lsp: LSPClient }) | null)?.lsp ?? null;

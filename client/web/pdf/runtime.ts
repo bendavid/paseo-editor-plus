@@ -92,16 +92,9 @@ const OWN_CSS = `
 export function binaryDataFactoryFor(fetchBinaryData: FetchBinaryData) {
   return class PaseoBinaryDataFactory {
     async fetch({ kind, filename }: { kind: BinaryKind; filename: string }): Promise<Uint8Array> {
-      const { base64 } = await fetchBinaryData({ kind, filename });
-      if (base64 === null) throw new Error(`The PDF viewer does not include ${kind} ${filename}.`);
-      return base64ToBytes(base64);
+      const bytes = await fetchBinaryData({ kind, filename });
+      if (bytes === null) throw new Error(`The PDF viewer does not include ${kind} ${filename}.`);
+      return bytes;
     }
   };
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
 }

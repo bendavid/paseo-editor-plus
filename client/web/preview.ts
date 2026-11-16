@@ -1,10 +1,10 @@
-import type { PreviewFrame } from "../../shared/rpc";
-import type { PreviewChannel, PreviewView } from "../web-contract";
+import type { PreviewChannel, PreviewFrame, PreviewView } from "../web-contract";
 
 // A preview page, such as tinymist's (a self-contained HTML document with its renderer and
 // WebAssembly inlined), talks to its server over a WebSocket. Here it runs in an iframe, and its WebSocket is
-// replaced by one that travels through Paseo's plugin calls: the plugin server holds the real
-// connection on the daemon host. So the preview works wherever the app reaches the daemon,
+// replaced by one that travels through the session: the plugin server holds the real connection
+// on the daemon host, and its messages arrive on the session's subscription, binary ones as raw
+// bytes. So the preview works wherever the app reaches the daemon,
 // over SSH or the relay included, without exposing a port.
 //
 // The page is written into an about:blank iframe with document.write rather than given as
@@ -26,11 +26,10 @@ function sockets(): Map<string, unknown> {
   return host[registry];
 }
 
-function base64ToArrayBuffer(realm: Window, base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  // Created in the page's realm: the page checks `data instanceof ArrayBuffer`.
-  const bytes = new (realm as unknown as typeof globalThis).Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+/** A copy in the page's realm: the page checks `data instanceof ArrayBuffer`. */
+function pageArrayBuffer(realm: Window, data: Uint8Array): ArrayBuffer {
+  const bytes = new (realm as unknown as typeof globalThis).Uint8Array(data.byteLength);
+  bytes.set(data);
   return bytes.buffer as ArrayBuffer;
 }
 
@@ -123,8 +122,8 @@ export function mountPreview(
     }
 
     receive(frame: PreviewFrame): void {
-      if (this.readyState !== 1) return;
-      const data = frame.t === "text" ? frame.d : base64ToArrayBuffer(realm, frame.d);
+      if (this.readyState !== 1 || frame.kind === "closed") return;
+      const data = frame.kind === "text" ? frame.text : pageArrayBuffer(realm, frame.bytes);
       this.fire("message", { data });
     }
 
@@ -173,7 +172,7 @@ export function mountPreview(
   return {
     deliver(frame) {
       if (destroyed) return;
-      if (frame.t === "close") {
+      if (frame.kind === "closed") {
         serverOpen = false;
         pending = [];
         socket?.serverClosed();

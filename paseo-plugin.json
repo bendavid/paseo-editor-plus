@@ -10,7 +10,7 @@
   },
   "media": ["assets/screenshot-light.png", "assets/screenshot-dark.png"],
   "requirements": {
-    "paseo": ">=0.13.0"
+    "paseo": ">=0.16.0"
   },
   "build": [["npm", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]]
 }

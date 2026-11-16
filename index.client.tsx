@@ -1,19 +1,35 @@
 import type { PluginClientContext, PluginFilePanelProps } from "@getpaseo/plugin/client";
 import { Platform } from "react-native";
 import { EditorPlusPanel } from "./client/panel";
-import { EditorPlusSettings } from "./client/settings";
+import { setPluginClient } from "./client/plugin-client";
+import { DownloadSettings, EditorSettings, ServerSettings } from "./client/settings";
 import { LANGUAGES } from "./shared/languages";
 
-const SETTINGS_ID = "servers";
+/** The settings tab for language servers, which the editor opens when a server is missing. */
+const SERVERS_SETTINGS_ID = "servers";
 
 export default function contribute(client: PluginClientContext) {
-  const openSettings = () => client.openSettings(SETTINGS_ID);
+  setPluginClient(client);
+  const openSettings = () => client.openSettings(SERVERS_SETTINGS_ID);
   const cleanups = [
+    // Paseo shows several settings screens as tabs, in this order; the first opens by default.
     client.addSettingsScreen({
-      id: SETTINGS_ID,
-      title: "Settings",
-      icon: "Settings",
-      Component: EditorPlusSettings,
+      id: "editor",
+      title: "Editor",
+      icon: "SquarePen",
+      Component: EditorSettings,
+    }),
+    client.addSettingsScreen({
+      id: SERVERS_SETTINGS_ID,
+      title: "Language servers",
+      icon: "Server",
+      Component: ServerSettings,
+    }),
+    client.addSettingsScreen({
+      id: "downloads",
+      title: "Downloads",
+      icon: "Download",
+      Component: DownloadSettings,
     }),
     // One file panel per language, so Paseo's "Open with" names the language. Only on web (the
     // desktop app and browsers): the editor and previews need the DOM, and on iOS and Android
@@ -32,5 +48,6 @@ export default function contribute(client: PluginClientContext) {
   ];
   return () => {
     for (const cleanup of cleanups) cleanup();
+    setPluginClient(null);
   };
 }

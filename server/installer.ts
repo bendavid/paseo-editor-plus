@@ -9,6 +9,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { RELEASES } from "../shared/server-releases";
 import { PACKAGES, type Platform, RELEASE_INFO, type ServerPackage } from "../shared/servers";
+import { Changes } from "./changes";
 import type { Launch } from "./discovery";
 import { NPM_PACKAGES } from "./npm";
 import { extractZip } from "./zip";
@@ -256,6 +257,8 @@ async function npmBinScript(folder: string, binary: string): Promise<string | nu
 
 export class Installer {
   private readonly jobs = new Map<string, InstallJob>();
+  /** A package's job or installed copy changed (download progress included). */
+  readonly changes = new Changes<string>();
 
   job(packageId: string): InstallJob | null {
     return this.jobs.get(packageId) ?? null;
@@ -291,7 +294,7 @@ export class Installer {
     return path ? { launch: { command: path, args: [] }, version: installed.version, path } : null;
   }
 
-  /** Starts an install in the background; poll `job` for progress. */
+  /** Starts an install in the background; `changes` reports its progress. */
   start(packageId: string, tools: { npm: string | null; go: string | null }): InstallJob {
     const running = this.jobs.get(packageId);
     if (running && running.phase !== "done" && running.phase !== "failed") return running;
@@ -303,15 +306,18 @@ export class Installer {
       error: null,
     };
     this.jobs.set(packageId, job);
-    void this.install(job, tools).then(
-      () => {
-        job.phase = "done";
-      },
-      (error: unknown) => {
-        job.phase = "failed";
-        job.error = error instanceof Error ? error.message : String(error);
-      },
-    );
+    this.changes.emit(packageId);
+    void this.install(job, tools)
+      .then(
+        () => {
+          job.phase = "done";
+        },
+        (error: unknown) => {
+          job.phase = "failed";
+          job.error = error instanceof Error ? error.message : String(error);
+        },
+      )
+      .finally(() => this.changes.emit(packageId));
     return job;
   }
 
@@ -321,6 +327,7 @@ export class Installer {
     delete record[packageId];
     await writeRecord(record);
     this.jobs.delete(packageId);
+    this.changes.emit(packageId);
   }
 
   private async install(job: InstallJob, tools: { npm: string | null; go: string | null }) {
@@ -378,6 +385,7 @@ export class Installer {
     for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
       hash.update(chunk);
       job.received += chunk.length;
+      this.changes.emit(job.packageId);
       if (!out.write(chunk))
         await new Promise<void>((resolve) => out.once("drain", () => resolve()));
     }
@@ -389,6 +397,7 @@ export class Installer {
       throw new Error(`The download's checksum does not match the pinned one (got ${digest}).`);
     }
     job.phase = "extracting";
+    this.changes.emit(job.packageId);
     const binary = plan.name;
     if (name.endsWith(".tar.gz") || name.endsWith(".tgz")) {
       await run("tar", ["-xzf", download, "-C", staging], { timeout: 300_000 });
@@ -415,6 +424,7 @@ export class Installer {
     const files = NPM_PACKAGES[job.packageId];
     if (!files) throw new Error(`No pinned npm packages for ${job.packageId}.`);
     job.phase = "installing";
+    this.changes.emit(job.packageId);
     await npmCi(staging, files, npm, { omitOptional: false });
   }
 
@@ -427,6 +437,7 @@ export class Installer {
     if (!go || entry.install.kind !== "go")
       throw new Error("Installing gopls needs Go on the daemon host.");
     job.phase = "installing";
+    this.changes.emit(job.packageId);
     await run(go, ["install", `${entry.install.module}@v${entry.version}`], {
       cwd: staging,
       env: { ...process.env, GOBIN: join(staging, "bin") },

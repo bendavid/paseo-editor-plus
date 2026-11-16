@@ -56,11 +56,10 @@ export class PdfjsAssets {
   }
 
   /** A binary file by exact name; anything not listed in its folder is missing. */
-  async binary(kind: BinaryKind, filename: string): Promise<{ base64: string | null }> {
+  async binary(kind: BinaryKind, filename: string): Promise<Uint8Array | null> {
     const names = await this.listing(kind);
-    if (!names.has(filename)) return { base64: null };
-    const data = await readFile(join(await this.root(), BINARY_FOLDERS[kind].folder, filename));
-    return { base64: data.toString("base64") };
+    if (!names.has(filename)) return null;
+    return readFile(join(await this.root(), BINARY_FOLDERS[kind].folder, filename));
   }
 
   private listing(kind: BinaryKind): Promise<Set<string>> {

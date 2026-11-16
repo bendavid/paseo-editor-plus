@@ -18,40 +18,91 @@ import { renderMarkdown as render } from "./server/markdown";
 import { PdfjsAssets } from "./server/pdfjs-assets";
 import { EditorSession } from "./server/session";
 import { personalWordsFile, Spelling } from "./server/spelling";
+import { watchFile } from "./server/watch";
 import { type LanguageProfile, languageById } from "./shared/languages";
 import {
   addSpellingWord,
   checkSpelling,
+  componentChanges,
   componentStatusRpc,
   removeComponent,
   suggestSpelling,
   closeSession,
   connectPreview,
   openSession,
-  pollSession,
+  sessionEvents,
   sendLsp,
   sendPreview,
   installServer,
-  latexLog,
+  latexLogChanges,
   locatePdf,
+  PDF_CHUNK,
+  pdfChanges,
   pdfjsBinary,
   pdfjsPart,
   readPdf,
   removeServer,
   renderMarkdown,
-  statPdf,
   synctexForward,
   synctexInverse,
   serverSettings,
   serverStatus,
 } from "./shared/rpc";
 
-/** An editor tab polls every few seconds; one gone this long was closed or lost its connection. */
-const ABANDONED_MS = 90_000;
+/**
+ * A session without its subscription this long belongs to a closed tab, or to an app that lost its
+ * connection and did not come back; a reconnecting app subscribes again well within it.
+ */
+const ABANDONED_MS = 60_000;
 /** Each session is a language server process; this bounds what a misbehaving client can start. */
 const MAX_SESSIONS = 24;
-/** Bytes of PDF per call: base64 makes it a third bigger, still far under the relay's limit. */
-const PDF_CHUNK = 3 * 1024 * 1024;
+/** Install progress goes out at most this often. */
+const PROGRESS_MS = 250;
+
+/**
+ * Calls `send` now, and again after `listen` reports a change, at most once per `PROGRESS_MS` and
+ * one call at a time, until `signal` aborts.
+ */
+function follow(
+  listen: (changed: () => void) => () => void,
+  send: () => Promise<void>,
+  signal: AbortSignal,
+): void {
+  let sending = false;
+  let pending = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = async () => {
+    timer = undefined;
+    if (sending) {
+      pending = true;
+      return;
+    }
+    sending = true;
+    try {
+      do {
+        pending = false;
+        if (signal.aborted) return;
+        await send();
+      } while (pending);
+    } catch {
+      // The next change sends again.
+    } finally {
+      sending = false;
+    }
+  };
+  const stop = listen(() => {
+    if (timer === undefined) timer = setTimeout(() => void run(), PROGRESS_MS);
+  });
+  void run();
+  signal.addEventListener(
+    "abort",
+    () => {
+      stop();
+      if (timer !== undefined) clearTimeout(timer);
+    },
+    { once: true },
+  );
+}
 
 async function isDirectory(path: string): Promise<boolean> {
   try {
@@ -160,16 +211,16 @@ export default function contribute(server: PluginServerContext) {
     };
   });
 
-  server.handle(sendLsp, ({ sessionId, messages }) => ({
-    alive: session(sessionId)?.sendLsp(messages) ?? false,
+  server.handle(sendLsp, ({ sessionId, seq, messages }) => ({
+    alive: session(sessionId)?.sendLsp(messages, seq) ?? false,
   }));
 
-  server.handle(pollSession, async ({ sessionId, waitMs }) => {
+  server.handle(sessionEvents, ({ sessionId }, { push, signal }) => {
     const found = session(sessionId);
-    if (!found) return { alive: false, exit: "The session ended.", lsp: [], preview: [] };
-    const result = await found.poll(waitMs);
-    if (!result.alive) sessions.delete(sessionId);
-    return result;
+    if (!found) throw new Error("The session ended.");
+    return found.attach(push, signal).then(() => {
+      if (!found.alive) sessions.delete(sessionId);
+    });
   });
 
   server.handle(connectPreview, async ({ sessionId, port, includeHtml }) => {
@@ -178,8 +229,8 @@ export default function contribute(server: PluginServerContext) {
     return { html: await found.connectPreview(port, includeHtml) };
   });
 
-  server.handle(sendPreview, ({ sessionId, messages }) => ({
-    alive: session(sessionId)?.sendPreview(messages) ?? false,
+  server.handle(sendPreview, ({ sessionId, seq, messages }) => ({
+    alive: session(sessionId)?.sendPreview(messages, seq) ?? false,
   }));
 
   server.handle(closeSession, ({ sessionId }) => {
@@ -188,7 +239,7 @@ export default function contribute(server: PluginServerContext) {
     return {};
   });
 
-  server.handle(serverStatus, async ({ language: languageId }) => {
+  async function statusOf(languageId: string) {
     const language = languageById(languageId);
     const none = {
       path: null,
@@ -223,6 +274,25 @@ export default function contribute(server: PluginServerContext) {
       const message = error instanceof Error ? error.message : String(error);
       return { ...extras, path: null, version: null, source: null, error: message };
     }
+  }
+
+  server.handle(serverStatus, ({ language: languageId }, { push, signal }) => {
+    const packageId = languageById(languageId)?.server.package;
+    follow(
+      (changed) => {
+        const stopInstaller = installer.changes.listen((id) => {
+          if (id === packageId) changed();
+        });
+        // A path set in the settings changes which server is used.
+        const stopSettings = settings.subscribe(() => changed());
+        return () => {
+          stopInstaller();
+          void stopSettings();
+        };
+      },
+      async () => push(await statusOf(languageId)),
+      signal,
+    );
   });
 
   // --- Previews rendered or built on this host.
@@ -234,26 +304,24 @@ export default function contribute(server: PluginServerContext) {
     return { root, pdf: pdfFor(root) };
   });
 
-  server.handle(latexLog, async ({ file, sinceMtimeMs }) => {
-    const log = logFor(await latexRoot(file));
-    let mtimeMs = 0;
-    try {
-      mtimeMs = (await stat(log)).mtimeMs;
-    } catch {
-      return { mtimeMs: 0, errors: mtimeMs === sinceMtimeMs ? null : [] };
-    }
-    if (mtimeMs === sinceMtimeMs) return { mtimeMs, errors: null };
-    const root = await latexRoot(file);
-    return { mtimeMs, errors: parseLatexLog(await readFile(log, "utf8"), root) };
+  // Subscription handlers return nothing, or the subscription would close when they finish.
+  server.handle(latexLogChanges, ({ file }, { push, signal }) => {
+    // The log of the file's root document (`% !TEX root`), which a build of any of its files writes.
+    void latexRoot(file).then((root) => {
+      const log = logFor(root);
+      watchFile(
+        log,
+        async (state) => {
+          const errors = state.exists ? parseLatexLog(await readFile(log, "utf8"), root) : [];
+          await push({ errors });
+        },
+        signal,
+      );
+    });
   });
 
-  server.handle(statPdf, async ({ path }) => {
-    try {
-      const info = await stat(path);
-      return { exists: info.isFile(), mtimeMs: info.mtimeMs, size: info.size };
-    } catch {
-      return { exists: false, mtimeMs: 0, size: 0 };
-    }
+  server.handle(pdfChanges, ({ path }, { push, signal }) => {
+    watchFile(path, (state) => push(state), signal);
   });
 
   server.handle(readPdf, async ({ path, offset }) => {
@@ -263,7 +331,7 @@ export default function contribute(server: PluginServerContext) {
       const length = Math.max(0, Math.min(PDF_CHUNK, info.size - offset));
       const buffer = Buffer.alloc(length);
       if (length > 0) await handle.read(buffer, 0, length, offset);
-      return { data: buffer.toString("base64"), total: info.size, mtimeMs: info.mtimeMs };
+      return buffer;
     } finally {
       await handle.close();
     }
@@ -299,6 +367,17 @@ export default function contribute(server: PluginServerContext) {
   server.handle(componentStatusRpc, ({ id, install, retry }) =>
     install ? components.ensure(id, retry ?? false) : components.status(id),
   );
+
+  server.handle(componentChanges, ({ id }, { push, signal }) => {
+    follow(
+      (changed) =>
+        components.changes.listen((changedId) => {
+          if (changedId === id) changed();
+        }),
+      async () => push(await components.status(id)),
+      signal,
+    );
+  });
 
   server.handle(removeComponent, async ({ id }) => {
     await components.remove(id);
@@ -363,7 +442,7 @@ export default function contribute(server: PluginServerContext) {
   const reaper = setInterval(() => {
     const cutoff = Date.now() - ABANDONED_MS;
     for (const [id, found] of sessions) {
-      if (found.lastSeen < cutoff) {
+      if (found.detachedSince !== null && found.detachedSince < cutoff) {
         found.close();
         sessions.delete(id);
       }

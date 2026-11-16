@@ -1,20 +1,17 @@
-import type { PluginTheme, RpcOutput } from "@getpaseo/plugin";
-import { useRpc } from "@getpaseo/plugin/client";
+import type { PluginTheme, SubscriptionEvent } from "@getpaseo/plugin";
+import { useRpc, useSubscription } from "@getpaseo/plugin/client";
 import { Modal } from "@getpaseo/plugin/client/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { installServer, removeServer, serverStatus } from "../shared/rpc";
 import { messageOf } from "./connection";
 
 // Installing a language server: the status of the server on the daemon host, the confirmation
-// that lists what will be downloaded and where it goes, and progress. Nothing installs without
-// the user pressing Install in the confirmation.
+// that lists what will be downloaded and where it goes, and progress, which the daemon pushes.
+// Nothing installs without the user pressing Install in the confirmation.
 
-export type ServerStatus = RpcOutput<typeof serverStatus>;
+export type ServerStatus = SubscriptionEvent<typeof serverStatus>;
 export type InstallDetails = NonNullable<ServerStatus["install"]>;
-
-/** Status polls this often while an install runs. */
-const PROGRESS_POLL_MS = 1000;
 
 export function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024
@@ -47,41 +44,13 @@ export function progressText(status: ServerStatus): string {
   }
 }
 
-/** The server status for a language, kept fresh while an install runs. */
+/** The server status for a language, as the daemon reports it and its install's progress. */
 export function useServerStatus(language: string) {
-  const fetchStatus = useRpc(serverStatus);
   const startInstall = useRpc(installServer);
   const remove = useRpc(removeServer);
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  const refresh = useCallback(async () => {
-    try {
-      const next = await fetchStatus({ language });
-      if (alive.current) setStatus(next);
-      return next;
-    } catch (cause) {
-      if (alive.current) setError(messageOf(cause));
-      return null;
-    }
-  }, [fetchStatus, language]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!installing(status)) return;
-    const timer = setTimeout(() => void refresh(), PROGRESS_POLL_MS);
-    return () => clearTimeout(timer);
-  }, [refresh, status]);
+  const subscription = useSubscription(serverStatus, { language }, setStatus);
 
   const install = useCallback(async () => {
     setError(null);
@@ -91,8 +60,7 @@ export function useServerStatus(language: string) {
     } catch (cause) {
       setError(messageOf(cause));
     }
-    await refresh();
-  }, [language, refresh, startInstall]);
+  }, [language, startInstall]);
 
   const uninstall = useCallback(async () => {
     setError(null);
@@ -101,10 +69,14 @@ export function useServerStatus(language: string) {
     } catch (cause) {
       setError(messageOf(cause));
     }
-    await refresh();
-  }, [language, refresh, remove]);
+  }, [language, remove]);
 
-  return { status, error, refresh, install, uninstall };
+  return {
+    status,
+    error: error ?? (subscription.status === "error" ? subscription.error.message : null),
+    install,
+    uninstall,
+  };
 }
 
 /** Asks before downloading: what, from where, how big, under what license, and where it goes. */

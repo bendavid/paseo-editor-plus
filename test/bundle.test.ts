@@ -74,7 +74,7 @@ describe("client bundle", () => {
     expect((await compileClient()).length).toBeLessThan(2_500_000);
     const registered = await registrations("web");
     expect(registered).toEqual([
-      "settings:servers",
+      ...SETTINGS_TABS,
       ...LANGUAGES.map(
         (language) => `panel:${language.id}:${Object.keys(language.extensions).join(",")}`,
       ),
@@ -83,10 +83,13 @@ describe("client bundle", () => {
   });
 
   it("registers no file panels on iOS and Android, where Paseo's own open these files", async () => {
-    expect(await registrations("ios")).toEqual(["settings:servers"]);
-    expect(await registrations("android")).toEqual(["settings:servers"]);
+    expect(await registrations("ios")).toEqual(SETTINGS_TABS);
+    expect(await registrations("android")).toEqual(SETTINGS_TABS);
   });
 });
+
+// Paseo shows the settings screens as tabs, in registration order.
+const SETTINGS_TABS = ["settings:editor", "settings:servers", "settings:downloads"];
 
 // Mirrors the server options in Paseo's plugin compiler.
 async function compileServer(): Promise<string> {

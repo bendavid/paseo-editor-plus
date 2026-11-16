@@ -28,10 +28,13 @@ describe("PDF.js assets", () => {
   });
 
   it("serve binary data by exact name only", async () => {
-    expect((await assets.binary("cMapUrl", "UniJIS-UTF16-H.bcmap")).base64).toBeTruthy();
-    expect((await assets.binary("wasmUrl", "openjpeg.wasm")).base64).toBeTruthy();
-    expect((await assets.binary("cMapUrl", "../package.json")).base64).toBeNull();
-    expect((await assets.binary("standardFontDataUrl", "LICENSE_FOXIT")).base64).toBeNull();
-    expect((await assets.binary("wasmUrl", "qcms_bg.wasm")).base64).toBeNull();
+    expect((await assets.binary("cMapUrl", "UniJIS-UTF16-H.bcmap"))?.length).toBeGreaterThan(0);
+    const wasm = await assets.binary("wasmUrl", "openjpeg.wasm");
+    expect(wasm).toBeInstanceOf(Uint8Array);
+    // WebAssembly's magic number: the bytes arrive unchanged.
+    expect([...wasm!.subarray(0, 4)]).toEqual([0x00, 0x61, 0x73, 0x6d]);
+    expect(await assets.binary("cMapUrl", "../package.json")).toBeNull();
+    expect(await assets.binary("standardFontDataUrl", "LICENSE_FOXIT")).toBeNull();
+    expect(await assets.binary("wasmUrl", "qcms_bg.wasm")).toBeNull();
   });
 });
